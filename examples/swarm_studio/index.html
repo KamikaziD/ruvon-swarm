@@ -171,6 +171,21 @@ html, body { height: 100%; background: #05080f; color: #e0e6ef;
   padding: 3px 8px; font-size: 10px; border: 1px solid #2c4a7a;
   background: #0d1830; color: #7ab0f0; border-radius: 4px; cursor: pointer;
 }
+#group-name-row {
+  display: flex; gap: 6px; align-items: center; margin-top: 6px;
+}
+#group-name-input {
+  flex: 1; background: #0d1830; border: 1px solid #2c4a7a; border-radius: 4px;
+  color: #c8d8ef; font-size: 11px; font-family: monospace; padding: 3px 6px;
+  text-transform: uppercase; letter-spacing: 0.04em;
+}
+#group-name-input::placeholder { color: #3a5070; }
+#group-name-input:focus { outline: none; border-color: #4a7bc4; }
+#group-name-go {
+  padding: 3px 8px; font-size: 10px; border: 1px solid #2c4a7a;
+  background: #0d1830; color: #7ab0f0; border-radius: 4px; cursor: pointer;
+  white-space: nowrap;
+}
 
 /* Collapsible advanced */
 details > summary { cursor: pointer; font-size: 11px; color: #6a8fb4; list-style: none; }
@@ -189,6 +204,13 @@ details > summary::-webkit-details-marker { display: none; }
     <div id="sov-link-box">
       <span id="sov-link-text">generating…</span>
       <button id="sov-link-copy" onclick="copySovLink()">copy</button>
+    </div>
+    <div id="group-name-row">
+      <input id="group-name-input" type="text" maxlength="32"
+             placeholder="custom group name…"
+             onkeydown="if(event.key==='Enter') joinCustomGroup()"
+             oninput="this.value=this.value.replace(/[^a-zA-Z0-9\-_]/g,'')"/>
+      <button id="group-name-go" onclick="joinCustomGroup()">join</button>
     </div>
     <div class="stat-row">
       <span class="stat-label">Group</span>
@@ -2368,6 +2390,16 @@ function initPeerJS(groupCode, isFounder) {
 window.copySovLink = function() {
   const text = document.getElementById("sov-link-text").textContent;
   navigator.clipboard?.writeText(text).then(() => toast("Link copied!")).catch(()=>{});
+};
+
+window.joinCustomGroup = function() {
+  const raw = document.getElementById("group-name-input").value.trim().toUpperCase();
+  if (!raw) return;
+  // Redirect to ?group=NAME — reinitializes the entire mesh with that group key.
+  // Bookmarking this URL always returns to the same private fog network.
+  const url = new URL(location.href);
+  url.searchParams.set("group", raw);
+  location.href = url.toString();
 };
 
 let _toastTimer;
