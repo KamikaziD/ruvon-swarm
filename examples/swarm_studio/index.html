@@ -578,6 +578,9 @@ let commandBrain  = null;
 let sidecarWorker = null;
 let pyodideWorker = null;
 
+// Safe wrapper — silently drops messages until workers are ready
+function _mbPost(msg) { if (meshBrain) meshBrain.postMessage(msg); }
+
 let currentPreset    = "ruvon3d";
 let _lastCustomSpec  = null;   // last formation_spec used (for resend on new follower join)
 let is3dPreset       = true;
@@ -883,7 +886,7 @@ function onPhysicsDone() {
 window.launchDrones = async function() {
   if (swarmLaunched) return;
   // Broadcast to all tabs so every squad launches together
-  meshBrain.postMessage({ type: "FLEET_ACTION_UPDATE", action: "launch" });
+  _mbPost({ type: "FLEET_ACTION_UPDATE", action: "launch" });
   _localLaunch();
 };
 
@@ -945,7 +948,7 @@ function _localLaunch() {
 }
 
 window.landDrones = function() {
-  meshBrain.postMessage({ type: "FLEET_ACTION_UPDATE", action: "land" });
+  _mbPost({ type: "FLEET_ACTION_UPDATE", action: "land" });
   _localLand();
 };
 
@@ -1020,7 +1023,7 @@ function _buildSlotMap() {
 
 function _broadcastFormationTargets(pts, preset, is3d) {
   if (remoteDroneSquads.size > 0) {
-    meshBrain.postMessage({ type: "FORMATION_TARGETS_UPDATE", targets: pts, preset, is3d, slotMap: _buildSlotMap() });
+    _mbPost({ type: "FORMATION_TARGETS_UPDATE", targets: pts, preset, is3d, slotMap: _buildSlotMap() });
   }
 }
 
@@ -1041,7 +1044,7 @@ let _lastIntentGlobalCount = 0;
  */
 function _broadcastFormationIntent(preset, is3d, seed, globalCount) {
   if (remoteDroneSquads.size > 0) {
-    meshBrain.postMessage({
+    _mbPost({
       type:         "FORMATION_INTENT_UPDATE",
       preset,
       is3d,
@@ -1183,7 +1186,7 @@ function _applyFormationTargetsMsg(msg) {
 window.apply3d = function(preset) {
   if (!isSovereign) {
     // Follower: relay command to sovereign, which will broadcast targets back
-    meshBrain.postMessage({ type: "REMOTE_COMMAND", cmd: { action: "formation3d", preset } });
+    _mbPost({ type: "REMOTE_COMMAND", cmd: { action: "formation3d", preset } });
     return;
   }
   currentPreset = preset;
@@ -1218,7 +1221,7 @@ window.apply3d = function(preset) {
 
 window.apply2d = function(preset) {
   if (!isSovereign) {
-    meshBrain.postMessage({ type: "REMOTE_COMMAND", cmd: { action: "formation", preset } });
+    _mbPost({ type: "REMOTE_COMMAND", cmd: { action: "formation", preset } });
     return;
   }
   currentPreset = preset;
@@ -1243,7 +1246,7 @@ window.apply2d = function(preset) {
 window.applyText = function(content) {
   if (!content?.trim()) return;
   if (!isSovereign) {
-    meshBrain.postMessage({ type: "REMOTE_COMMAND", cmd: { action: "text", content: content.trim() } });
+    _mbPost({ type: "REMOTE_COMMAND", cmd: { action: "text", content: content.trim() } });
     return;
   }
   _ruvonBaseTargets = null;
@@ -1287,13 +1290,13 @@ window.requestJoinFormation = function() {
       _applyFormationTargetsMsg(msg);
     }
     // Notify sovereign so it adds us to the active fleet
-    meshBrain.postMessage({ type: "REMOTE_COMMAND", cmd: { action: "join_formation", podId: myPodId } });
+    _mbPost({ type: "REMOTE_COMMAND", cmd: { action: "join_formation", podId: myPodId } });
     toast("Formation joined!");
   } else {
     // Ask sovereign to (re)broadcast current formation, include our podId so
     // sovereign can add us to the active fleet before recomputing
     meshLog(`Join — no buffered targets, requesting from sovereign  podId=${myPodId?.slice(-6)}`, "#f0c070");
-    meshBrain.postMessage({ type: "REMOTE_COMMAND", cmd: { action: "join_formation", podId: myPodId } });
+    _mbPost({ type: "REMOTE_COMMAND", cmd: { action: "join_formation", podId: myPodId } });
     toast("Requesting formation from sovereign…");
   }
 };
@@ -1348,7 +1351,7 @@ window.applyFormationSpec = function(spec) {
     return;
   }
   if (!isSovereign) {
-    meshBrain.postMessage({ type: "REMOTE_COMMAND", cmd: { action: "formation_spec", ...spec } });
+    _mbPost({ type: "REMOTE_COMMAND", cmd: { action: "formation_spec", ...spec } });
     return;
   }
   _ruvonBaseTargets = null;
@@ -1675,9 +1678,9 @@ function handleMeshMsg(e) {
           );
           result = parseCommandMain(r.text ?? "");
         }
-        meshBrain.postMessage({ type: "INFERENCE_RESULT", task_id, result: result ?? {} });
+        _mbPost({ type: "INFERENCE_RESULT", task_id, result: result ?? {} });
       } catch (err) {
-        meshBrain.postMessage({ type: "INFERENCE_RESULT", task_id, result: {}, error: String(err) });
+        _mbPost({ type: "INFERENCE_RESULT", task_id, result: {}, error: String(err) });
       }
     })();
   } else if (msg.type === "FORMATION_ACK") {
@@ -1785,7 +1788,7 @@ function broadcastSwarmState() {
       battery: Math.round(f32View[b+IX.BATT]),
     });
   }
-  meshBrain.postMessage({ type: "SWARM_STATE_UPDATE", formation: currentPreset, drones });
+  _mbPost({ type: "SWARM_STATE_UPDATE", formation: currentPreset, drones });
 }
 
 function applyReceivedState3d(remoteDrones) {
@@ -2418,6 +2421,9 @@ if (!crossOriginIsolated) {
   const banner = document.getElementById("webgpu-banner");
   banner.innerHTML = `<div style="font-size:48px;">⏳</div><div>Activating secure context… reloading shortly</div>`;
   banner.classList.add("show");
+  // Fallback: force-reload after 3 s in case the SW activate event was missed
+  // (race condition on first incognito/fresh load).
+  setTimeout(() => location.reload(), 3000);
 } else {
   init().catch(err => {
     console.error("[init]", err);
