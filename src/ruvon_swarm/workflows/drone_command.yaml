@@ -1,0 +1,21 @@
+workflow_type: DroneCommand
+description: "Execute a single drone swarm command via ruvon-edge"
+version: "1"
+initial_state_model_path: ruvon_swarm.state_models.DroneCommandState
+steps:
+  - name: ParseCommand
+    type: STANDARD
+    function: ruvon_swarm.steps.formation.parse_command
+    automate_next: true
+  - name: ValidateCommand
+    type: STANDARD
+    function: ruvon_swarm.steps.formation.validate_formation
+    automate_next: true
+  - name: LogCommand
+    type: STANDARD
+    function: ruvon_swarm.steps.formation.log_formation
+    automate_next: true
+  - name: ExecuteCommand
+    type: STANDARD
+    function: ruvon_swarm.steps.formation.execute_formation
+    automate_next: true

@@ -1,0 +1,13 @@
+workflow_type: SwarmHealth
+description: "Telemetry aggregation and battery health monitoring for a drone squad"
+version: "1"
+initial_state_model_path: ruvon_swarm.state_models.SwarmHealthState
+steps:
+  - name: RecordTelemetry
+    type: STANDARD
+    function: ruvon_swarm.steps.telemetry.record_telemetry
+    automate_next: true
+  - name: CheckBatteryHealth
+    type: STANDARD
+    function: ruvon_swarm.steps.telemetry.check_battery_health
+    automate_next: true

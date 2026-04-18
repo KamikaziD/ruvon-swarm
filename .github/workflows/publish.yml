@@ -1,0 +1,40 @@
+name: Publish ruvon-swarm to PyPI
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version tag to publish (e.g. v0.1.0)"
+        required: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write  # for trusted publishing (OIDC)
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install build tools
+        run: pip install build hatchling
+
+      - name: Build wheel and sdist
+        run: python -m build
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        # Uses OIDC trusted publishing — no API token needed when the
+        # PyPI trusted publisher is configured for this repo.
+        # Fallback: set PYPI_API_TOKEN secret and uncomment below:
+        # with:
+        #   password: ${{ secrets.PYPI_API_TOKEN }}

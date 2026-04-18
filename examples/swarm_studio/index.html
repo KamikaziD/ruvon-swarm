@@ -1,0 +1,2288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Ruvon Swarm Studio 3D — Private Fog Network</title>
+<!-- Cross-Origin Isolation: required for SharedArrayBuffer (SAB physics workers).
+     On GitHub Pages this service worker intercepts all responses and adds COOP/COEP headers. -->
+<script src="coi-serviceworker.js"></script>
+<link rel="manifest" href="manifest.json"/>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='28'>⬡</text></svg>"/>
+<style>
+/* ── Reset ────────────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; background: #05080f; color: #e0e6ef;
+  font-family: 'Inter', system-ui, sans-serif; overflow: hidden; }
+
+/* ── Layout ──────────────────────────────────────────────────────────────── */
+#app { display: flex; height: 100vh; }
+
+#sidebar {
+  width: 280px; min-width: 260px;
+  background: #0b0f1a; border-right: 1px solid #1a2236;
+  display: flex; flex-direction: column;
+  padding: 12px; overflow-y: auto; gap: 14px; z-index: 10;
+}
+
+#canvas-wrap { flex: 1; position: relative; overflow: hidden; }
+#webgpu-canvas, #overlay-canvas {
+  position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+}
+#overlay-canvas { pointer-events: none; }
+
+/* ── Banners ─────────────────────────────────────────────────────────────── */
+#webgpu-banner {
+  display: none; position: absolute; inset: 0; z-index: 50;
+  background: #05080f; flex-direction: column; align-items: center;
+  justify-content: center; gap: 16px; font-size: 18px; color: #4a7bc4;
+  text-align: center; padding: 24px;
+}
+#webgpu-banner.show { display: flex; }
+#leader-banner {
+  display: none; position: absolute; top: 20px; left: 50%;
+  transform: translateX(-50%); background: #0a1f4e;
+  border: 2px solid #4a7bc4; border-radius: 10px;
+  padding: 12px 24px; font-size: 14px; font-weight: 700;
+  color: #a8d4ff; letter-spacing: 0.08em; z-index: 20;
+  animation: pulse-border 2s ease-in-out infinite;
+}
+#leader-banner.show { display: block; }
+@keyframes pulse-border {
+  0%,100% { box-shadow: 0 0 0 0 rgba(74,123,196,0.4); }
+  50%      { box-shadow: 0 0 0 8px rgba(74,123,196,0); }
+}
+@keyframes join-pulse {
+  0%,100% { box-shadow: 0 0 0 0 rgba(46,200,100,0.5); transform: scale(1); }
+  50%      { box-shadow: 0 0 0 10px rgba(46,200,100,0); transform: scale(1.02); }
+}
+.btn-join {
+  width: 100%; padding: 11px; border-radius: 8px; border: none; cursor: pointer;
+  background: linear-gradient(135deg, #1a4e3a, #2a8a5c);
+  color: #a0f0c0; font-size: 13px; font-weight: 700; letter-spacing: 0.06em;
+  animation: join-pulse 1.5s ease-in-out infinite;
+  transition: all 0.15s;
+}
+.btn-join:hover { background: linear-gradient(135deg, #2a7a56, #3aaa72); }
+.btn-join:disabled { opacity: 0.5; animation: none; cursor: default; }
+
+/* ── Toast ───────────────────────────────────────────────────────────────── */
+#toast {
+  position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+  background: #1a2a4e; border: 1px solid #2c4a7a; border-radius: 8px;
+  padding: 8px 18px; font-size: 12px; color: #a0c0e8; z-index: 99;
+  opacity: 0; transition: opacity 0.3s; pointer-events: none;
+}
+#toast.show { opacity: 1; }
+
+/* ── Sidebar sections ────────────────────────────────────────────────────── */
+.section-title {
+  font-size: 10px; font-weight: 700; letter-spacing: 0.12em;
+  color: #4a7bc4; text-transform: uppercase; margin-bottom: 6px;
+}
+.section { display: flex; flex-direction: column; gap: 7px; }
+.divider { border: none; border-top: 1px solid #1a2236; margin: 0; }
+
+/* Buttons */
+.btn-primary {
+  width: 100%; padding: 10px; border-radius: 8px; border: none; cursor: pointer;
+  background: linear-gradient(135deg, #1a3a6e, #2a5caa);
+  color: #cce0ff; font-size: 13px; font-weight: 600; letter-spacing: 0.05em;
+  transition: all 0.15s;
+}
+.btn-primary:hover { background: linear-gradient(135deg, #2a5caa, #3a72c8); }
+.btn-primary:disabled { opacity: 0.4; cursor: default; }
+
+.btn-secondary {
+  width: 100%; padding: 7px; border-radius: 6px; cursor: pointer;
+  background: #101827; border: 1px solid #1e2d45;
+  color: #9eb4d4; font-size: 12px; transition: all 0.15s;
+}
+.btn-secondary:hover { background: #162236; color: #e0e6ef; }
+
+/* Preset grid */
+.preset-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
+.preset-btn {
+  padding: 6px 4px; border: 1px solid #1e2d45; background: #101827;
+  color: #9eb4d4; border-radius: 6px; cursor: pointer; font-size: 11px;
+  transition: all 0.15s;
+}
+.preset-btn:hover { background: #162236; color: #e0e6ef; border-color: #2c4a7a; }
+.preset-btn.active { background: #1a3a6e; border-color: #4a7bc4; color: #a8c8ff; }
+
+/* Text input */
+.text-input {
+  width: 100%; padding: 7px 9px; background: #101827;
+  border: 1px solid #1e2d45; border-radius: 6px;
+  color: #e0e6ef; font-size: 12px; outline: none;
+}
+.text-input:focus { border-color: #4a7bc4; }
+.text-input::placeholder { color: #4a607a; }
+
+/* Stat rows */
+.stat-row { display: flex; justify-content: space-between; align-items: center; }
+.stat-label { font-size: 11px; color: #6a8fb4; }
+.stat-value { font-size: 11px; color: #c0d4ee; font-variant-numeric: tabular-nums; }
+.stat-value.good { color: #7ed9a0; }
+.stat-value.warn { color: #f0c060; }
+.stat-value.bad  { color: #e07070; }
+
+/* Progress bar */
+.progress-wrap { background: #101827; border-radius: 4px; height: 6px; overflow: hidden; }
+.progress-bar  { height: 100%; background: #4a7bc4; transition: width 0.3s; border-radius: 4px; }
+
+/* Badge */
+.badge {
+  display: inline-block; padding: 2px 7px; border-radius: 10px;
+  font-size: 10px; font-weight: 600; background: #1a3a6e; color: #7ab0f0;
+}
+.badge.green { background: #0d2a1a; color: #7ed9a0; }
+.badge.red   { background: #2a0d0d; color: #e07070; }
+.badge.yellow{ background: #2a1f0d; color: #f0c060; }
+
+/* Heartbeat dot */
+.hb-dot {
+  width: 8px; height: 8px; border-radius: 50%; display: inline-block;
+  background: #e07070; flex-shrink: 0;
+}
+.hb-dot.live { background: #7ed9a0; animation: hb-pulse 2s ease-in-out infinite; }
+@keyframes hb-pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
+
+/* Glass box */
+#glass-box-panel {
+  background: #0d1525; border: 1px solid #1e2d45; border-radius: 6px;
+  padding: 8px; font-size: 11px; color: #9eb4d4; line-height: 1.5;
+  display: none;
+}
+#glass-box-panel.show { display: block; }
+
+/* Token stream */
+#token-stream {
+  font-size: 10px; color: #4a7bc4; word-break: break-all;
+  min-height: 14px; font-family: monospace;
+}
+
+/* Sovereign link */
+#sov-link-box {
+  display: flex; gap: 6px; align-items: center;
+}
+#sov-link-text {
+  flex: 1; font-size: 10px; color: #4a7bc4; font-family: monospace;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+#sov-link-copy {
+  padding: 3px 8px; font-size: 10px; border: 1px solid #2c4a7a;
+  background: #0d1830; color: #7ab0f0; border-radius: 4px; cursor: pointer;
+}
+
+/* Collapsible advanced */
+details > summary { cursor: pointer; font-size: 11px; color: #6a8fb4; list-style: none; }
+details > summary::-webkit-details-marker { display: none; }
+</style>
+</head>
+<body>
+<div id="app">
+
+<!-- ══ SIDEBAR ══════════════════════════════════════════════════════════════ -->
+<aside id="sidebar">
+
+  <!-- ⬡ Sovereign Link -->
+  <section class="section">
+    <div class="section-title">⬡ Sovereign Link</div>
+    <div id="sov-link-box">
+      <span id="sov-link-text">generating…</span>
+      <button id="sov-link-copy" onclick="copySovLink()">copy</button>
+    </div>
+    <div class="stat-row">
+      <span class="stat-label">Group</span>
+      <span id="sovereign-badge" class="stat-value">—</span>
+    </div>
+    <div class="stat-row">
+      <span class="stat-label">Mesh peers</span>
+      <span id="peer-count" class="stat-value">0</span>
+    </div>
+    <div class="stat-row">
+      <span class="stat-label">Total nodes</span>
+      <span id="node-count" class="stat-value">64</span>
+    </div>
+  </section>
+
+  <hr class="divider"/>
+
+  <!-- 🚀 Swarm -->
+  <section class="section">
+    <div class="section-title">🚀 Swarm</div>
+    <!-- Join Formation: visible on follower tabs -->
+    <button id="join-btn" class="btn-join" onclick="requestJoinFormation()" style="display:none;">
+      Join Formation
+    </button>
+    <div id="staging-notice" style="display:none; font-size:11px; color:#f0c060; padding:3px 0;"></div>
+    <button id="launch-btn" class="btn-primary" onclick="launchDrones()">Launch Drones</button>
+    <button id="land-btn" class="btn-secondary" onclick="landDrones()">Land All</button>
+    <div class="stat-row">
+      <span class="stat-label">Status</span>
+      <span id="swarm-status" class="stat-value">Landed</span>
+    </div>
+    <div id="batt-charging-row" class="stat-row" style="display:none;">
+      <span class="stat-label">Charging</span>
+      <span id="batt-avg" class="stat-value good">100%</span>
+    </div>
+  </section>
+
+  <hr class="divider"/>
+
+  <!-- 🧠 Brain (BYOB / wllama) -->
+  <section class="section">
+    <div class="section-title">🧠 Brain</div>
+    <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:#9eb4d4;cursor:pointer;">
+      <input type="checkbox" id="use-ollama" onchange="onOllamaToggle(this.checked)"/>
+      Bring Your Own Brain (Ollama)
+    </label>
+    <div id="ollama-config" style="display:none;flex-direction:column;gap:6px;">
+      <div style="display:flex;gap:6px;align-items:center;">
+        <div id="hb-dot" class="hb-dot"></div>
+        <input id="ollama-url" class="text-input" value="http://localhost:11434"
+               style="flex:1;" placeholder="Ollama URL" oninput="scheduleOllamaProbe()"/>
+      </div>
+      <input id="ollama-model" class="text-input" value="llama3.2:3b" placeholder="Model name"/>
+    </div>
+    <div id="wllama-config" style="display:flex;flex-direction:column;gap:6px;">
+      <select id="model-select" class="text-input" onchange="onModelChange(this.value)">
+        <option value="SmolLM2-135M">SmolLM2-135M (88 MB)</option>
+        <option value="Qwen2.5-0.5B">Qwen2.5-0.5B (395 MB)</option>
+        <option value="Nemotron-Mini-4B">Nemotron-Mini-4B (2.7 GB)</option>
+      </select>
+      <div id="model-status" class="stat-value" style="font-size:11px;">Not loaded</div>
+      <div id="token-stream"></div>
+    </div>
+  </section>
+
+  <hr class="divider"/>
+
+  <!-- 💬 Command -->
+  <section class="section">
+    <div class="section-title">💬 Command</div>
+    <div id="role-indicator" style="font-size:10px;padding:3px 6px;border-radius:4px;margin-bottom:6px;display:none;"></div>
+    <input id="intent-input" class="text-input" placeholder="describe a formation or action…"
+           onkeydown="if(event.key==='Enter') submitIntent()"/>
+    <button class="btn-secondary" onclick="submitIntent()">Send</button>
+    <div id="intent-status" class="stat-value" style="font-size:11px;"></div>
+  </section>
+
+  <hr class="divider"/>
+
+  <!-- 🎨 Formations -->
+  <section class="section">
+    <div class="section-title">🎨 3D Formations</div>
+    <div class="preset-grid" id="presets-3d">
+      <button class="preset-btn" onclick="apply3d('sphere')">Sphere</button>
+      <button class="preset-btn" onclick="apply3d('helix')">Helix</button>
+      <button class="preset-btn" onclick="apply3d('dna')">DNA</button>
+      <button class="preset-btn" onclick="apply3d('torus')">Torus</button>
+      <button class="preset-btn" onclick="apply3d('wave')">Wave</button>
+      <button class="preset-btn" onclick="apply3d('vortex')">Vortex</button>
+      <button class="preset-btn active" onclick="apply3d('ruvon3d')">Ruvon R</button>
+      <button class="preset-btn" onclick="apply3d('cube')">Cube</button>
+    </div>
+    <div class="section-title" style="margin-top:6px;">2D Formations</div>
+    <div class="preset-grid">
+      <button class="preset-btn" onclick="apply2d('circle')">Circle</button>
+      <button class="preset-btn" onclick="apply2d('heart')">Heart</button>
+      <button class="preset-btn" onclick="apply2d('star')">Star</button>
+      <button class="preset-btn" onclick="apply2d('spiral')">Spiral</button>
+    </div>
+    <input id="text-input" class="text-input" placeholder="write text or emoji…"
+           onkeydown="if(event.key==='Enter') applyText(this.value)"/>
+  </section>
+
+  <hr class="divider"/>
+
+  <!-- ⚙ Workflow (Pyodide) -->
+  <section class="section">
+    <div class="section-title">⚙ Workflow</div>
+    <div id="pyodide-loading" style="display:flex;flex-direction:column;gap:5px;">
+      <div class="stat-row">
+        <span class="stat-label" id="pyodide-stage">Waiting…</span>
+        <span class="stat-value" id="pyodide-pct">0%</span>
+      </div>
+      <div class="progress-wrap"><div class="progress-bar" id="pyodide-bar" style="width:0%"></div></div>
+    </div>
+    <div id="pyodide-ready" style="display:none;flex-direction:column;gap:5px;">
+      <div class="stat-row">
+        <span class="badge green">✅ ruvon-edge</span>
+        <span class="stat-value" id="workflow-step" style="font-size:10px;"></span>
+      </div>
+      <div id="workflow-ulid" style="font-size:9px;color:#3a5a8a;font-family:monospace;word-break:break-all;"></div>
+    </div>
+  </section>
+
+  <hr class="divider"/>
+
+  <!-- ⚡ Sidecar -->
+  <section class="section">
+    <div class="section-title">⚡ Sidecar</div>
+    <div class="stat-row">
+      <span class="stat-label">Avg frame</span>
+      <span id="frame-avg" class="stat-value">—</span>
+    </div>
+    <div class="stat-row">
+      <span class="stat-label">p95 frame</span>
+      <span id="frame-p95" class="stat-value">—</span>
+    </div>
+    <div class="stat-row">
+      <span class="stat-label">LLM</span>
+      <span id="llm-throttle" class="badge">Normal</span>
+    </div>
+  </section>
+
+  <hr class="divider"/>
+
+  <!-- 🌱 Green Tracker -->
+  <section class="section">
+    <div class="section-title">🌱 Green</div>
+    <div class="stat-row">
+      <span class="stat-label">Local</span>
+      <span id="green-local" class="stat-value">—</span>
+    </div>
+    <div class="stat-row">
+      <span class="stat-label">Cloud equiv.</span>
+      <span id="green-cloud" class="stat-value">—</span>
+    </div>
+    <div class="stat-row">
+      <span class="stat-label">Savings</span>
+      <span id="green-pct" class="stat-value good">—</span>
+    </div>
+  </section>
+
+  <hr class="divider"/>
+
+  <!-- 🔬 Glass Box -->
+  <section class="section">
+    <div class="section-title">🔬 Glass Box <span style="font-size:10px;font-weight:400;color:#4a607a">(click drone)</span></div>
+    <div id="glass-box-panel">Click any drone in the 3D scene to inspect its ruvon-edge decision trace.</div>
+  </section>
+
+  <hr class="divider"/>
+
+  <!-- 🔗 Mesh Log -->
+  <section class="section">
+    <div class="section-title" style="display:flex;justify-content:space-between;align-items:center">
+      <span>🔗 Mesh Log</span>
+      <button onclick="document.getElementById('mesh-log').innerHTML=''" style="font-size:9px;padding:1px 6px;background:#0d1830;color:#4a7bc4;border:1px solid #2c4a7a;border-radius:3px;cursor:pointer">clear</button>
+    </div>
+    <div id="mesh-log" style="font-family:monospace;font-size:10px;color:#7ab0f0;max-height:140px;overflow-y:auto;background:#070f1f;border:1px solid #1a3060;border-radius:4px;padding:4px;line-height:1.5;"></div>
+  </section>
+
+  <hr class="divider"/>
+
+  <!-- 📊 Stats -->
+  <section class="section">
+    <div class="section-title">📊 Stats</div>
+    <div class="stat-row"><span class="stat-label">Active drones</span><span id="stat-active" class="stat-value">0</span></div>
+    <div class="stat-row"><span class="stat-label">Avg deviation</span><span id="stat-dev" class="stat-value">—</span></div>
+    <div class="stat-row"><span class="stat-label">Avg altitude</span><span id="stat-alt" class="stat-value">—</span></div>
+    <div class="stat-row"><span class="stat-label">Avg battery</span><span id="stat-batt" class="stat-value">—</span></div>
+  </section>
+
+  <hr class="divider"/>
+
+  <!-- 🧪 Learning -->
+  <section class="section">
+    <div class="section-title">🧪 Learning</div>
+    <div id="learning-status" class="stat-value" style="font-size:11px;">No data yet</div>
+  </section>
+
+  <hr class="divider"/>
+
+  <!-- 🔧 Sim -->
+  <section class="section">
+    <div class="section-title">🔧 Sim</div>
+    <div class="preset-grid">
+      <button class="preset-btn" onclick="simAction('fail')">Fail 10%</button>
+      <button class="preset-btn" onclick="simAction('recover')">Recover</button>
+      <button class="preset-btn" onclick="simAction('drain')">Drain</button>
+      <button class="preset-btn" onclick="simAction('scatter')">Scatter</button>
+    </div>
+  </section>
+
+</aside>
+
+<!-- ══ CANVAS AREA ════════════════════════════════════════════════════════════ -->
+<div id="canvas-wrap">
+  <canvas id="webgpu-canvas"></canvas>
+  <canvas id="overlay-canvas"></canvas>
+
+  <div id="webgpu-banner">
+    <div style="font-size:48px;">⚠</div>
+    <div><strong>WebGPU required</strong></div>
+    <div style="font-size:14px;color:#6a8fb4;">Please open in Chrome or Edge (version 113+)</div>
+  </div>
+
+  <div id="leader-banner">YOUR MACHINE IS NOW THE SWARM LEADER</div>
+</div>
+
+</div><!-- #app -->
+
+<div id="toast"></div>
+
+<!-- ══ SCRIPT ════════════════════════════════════════════════════════════════ -->
+<script type="module">
+import { OrbitCamera }           from "./camera.js";
+import { initRenderer }          from "./renderer_webgpu.js";
+import { getFormationTargets3d, rotateAboutY } from "./formations_3d.js";
+import { getFormationTargets }   from "./formations.js";
+import { textFormation }         from "./formations.js";
+import { startPerformance, recordTelemetry, endPerformance, loadAndApplyTweaks }
+                                 from "./learning_loop.js";
+
+// ── Constants ─────────────────────────────────────────────────────────────────
+const DRONE_COUNT   = 64;
+const NUM_PHYS_WKRS = 4;
+const SAB_FLOATS    = 16;
+const CANVAS_DEPTH  = 600;
+
+// Status codes (f32)
+const ST_ACTIVE     = 0;
+const ST_LOW_BAT    = 1;
+const ST_OFFLINE    = 2;
+const ST_LANDED     = 3;
+const ST_SPOOLING   = 4;
+const ST_TAKING_OFF = 5;
+const ST_LANDING    = 6;
+
+// SAB field indices
+const IX = {
+  X:0,Y:1,Z:2,VX:3,VY:4,VZ:5,TX:6,TY:7,TZ:8,
+  PITCH:9,ROLL:10,ROTOR:11,BATT:12,THRUST:13,STATUS:14,TIER:15,
+};
+
+const HOVER_HEIGHT_RATIO = 0.30;
+
+// ── World geometry anchor ──────────────────────────────────────────────────────
+// All 3D formations are placed in a UNIFORM cubic volume around WORLD_CENTER.
+// Coordinates are FIXED (canvas-independent) so all tabs share the same world space.
+// This is the prerequisite for multi-tab camera synchronisation.
+const WORLD_RADIUS = 300;           // half-extent of formation space (world units)
+const WORLD_CENTER_Z_OFFSET = 0.55; // formation centre altitude = hover + 0.55 * WORLD_RADIUS
+// Fixed formation centre — identical on every tab regardless of window size.
+// X and Z are horizontal (maps to canvas plane). Y is altitude.
+const WORLD_CX  = 2000;                                                           // fixed X centre
+const WORLD_CZ  = 2000;                                                           // fixed Z centre
+const WORLD_CY  = HOVER_HEIGHT_RATIO * CANVAS_DEPTH + WORLD_RADIUS * WORLD_CENTER_Z_OFFSET; // altitude ≈ 345
+// Fixed orbit radius — all pods see the formation at the same angular size.
+const WORLD_CAM_RADIUS = WORLD_RADIUS * 5.5;  // ≈ 1650 — comfortably frames the formation
+
+// ── wllama ─────────────────────────────────────────────────────────────────────
+const WLLAMA_CDN  = "https://cdn.jsdelivr.net/npm/@wllama/wllama@2/esm/index.js";
+const WLLAMA_BASE = "https://cdn.jsdelivr.net/npm/@wllama/wllama@2/esm/";
+const WLLAMA_PATHS = {
+  "single-thread/wllama.wasm": WLLAMA_BASE + "single-thread/wllama.wasm",
+  "multi-thread/wllama.wasm":  WLLAMA_BASE + "multi-thread/wllama.wasm",
+};
+const MODEL_CONFIGS = {
+  "SmolLM2-135M":   { repo:"bartowski/SmolLM2-135M-Instruct-GGUF",   file:"SmolLM2-135M-Instruct-Q4_K_M.gguf",   ramMb:88   },
+  "Qwen2.5-0.5B":   { repo:"bartowski/Qwen2.5-0.5B-Instruct-GGUF",   file:"Qwen2.5-0.5B-Instruct-Q4_K_M.gguf",   ramMb:395  },
+  "Nemotron-Mini-4B":{ repo:"bartowski/Nemotron-Mini-4B-Instruct-GGUF",file:"Nemotron-Mini-4B-Instruct-Q4_K_M.gguf",ramMb:2700 },
+};
+
+const SYSTEM_PROMPT =
+`You are a 3D drone swarm controller. Reply with ONE JSON object only. No explanation. No markdown fences.
+
+ACTION VALUES — use ONLY these exact strings:
+  formation3d       — 3D preset shape
+  formation         — 2D flat preset shape
+  formation_spec    — novel parametric shape (math expressions)
+  text              — spell a word with drones
+  launch            — take off
+  land              — land all
+  scatter           — break formation
+  recover           — resume formation
+
+3D PRESETS: sphere helix dna torus wave vortex cube ruvon3d
+2D PRESETS: circle heart horse birds waterfall spiral diamond star triangle cross arrow hexagon smiley lightning rocket ruvon
+
+For formation_spec, supply parametric math expressions for x(t), y(t), z(t) where t ∈ [t_min, t_max].
+All values must be in [0, 1] range (normalized). Use sin, cos, sqrt, PI, abs, etc.
+Each drone maps to t = t_min + i/(n-1)*(t_max-t_min) for i = 0..n-1.
+
+EXAMPLES:
+Q: make a ball
+A: {"action":"formation3d","preset":"sphere"}
+
+Q: double helix
+A: {"action":"formation3d","preset":"helix"}
+
+Q: rotate / spin / ruvon logo
+A: {"action":"formation3d","preset":"ruvon3d"}
+
+Q: write RUVON
+A: {"action":"text","content":"RUVON"}
+
+Q: launch
+A: {"action":"launch"}
+
+Q: land all
+A: {"action":"land"}
+
+Q: heart
+A: {"action":"formation","preset":"heart"}
+
+Q: make a pretzel or trefoil knot
+A: {"action":"formation_spec","name":"trefoil","t_min":0,"t_max":6.2832,"fn_x":"0.5+0.3*(sin(t)+2*sin(2*t))","fn_y":"0.5+0.3*(cos(t)-2*cos(2*t))","fn_z":"0.5+0.3*(-sin(3*t))"}
+
+Q: butterfly shape
+A: {"action":"formation_spec","name":"butterfly","t_min":0,"t_max":12.5664,"fn_x":"0.5+0.35*sin(t)*(exp(cos(t))-2*cos(4*t))","fn_y":"0.5+0.35*cos(t)*(exp(cos(t))-2*cos(4*t))","fn_z":"0.5+0.2*sin(t*2)"}
+
+Q: figure-8 or lemniscate in 3D
+A: {"action":"formation_spec","name":"figure8","t_min":0,"t_max":6.2832,"fn_x":"0.5+0.38*sin(t)","fn_y":"0.5+0.38*sin(t)*cos(t)","fn_z":"0.5+0.2*sin(2*t)"}
+
+Q: rose curve with 5 petals
+A: {"action":"formation_spec","name":"rose5","t_min":0,"t_max":6.2832,"fn_x":"0.5+0.4*cos(5*t)*cos(t)","fn_y":"0.5+0.4*cos(5*t)*sin(t)","fn_z":"0.5+0.15*sin(10*t)"}
+
+Q: galaxy spiral
+A: {"action":"formation_spec","name":"galaxy","t_min":0,"t_max":18.8496,"fn_x":"0.5+(0.04+0.4*(t/(18.8496)))*cos(t)","fn_y":"0.5+(0.04+0.4*(t/(18.8496)))*sin(t)","fn_z":"0.5+0.1*sin(t*0.5)"}
+
+Q:`;
+
+// ── State ──────────────────────────────────────────────────────────────────────
+let sab           = null;
+let f32View       = null;
+let physWorkers   = [];
+let physDone      = 0;
+let camera        = null;
+let renderer      = null;
+let meshBrain     = null;
+let commandBrain  = null;
+let sidecarWorker = null;
+let pyodideWorker = null;
+
+let currentPreset    = "ruvon3d";
+let _lastCustomSpec  = null;   // last formation_spec used (for resend on new follower join)
+let is3dPreset       = true;
+let isSovereign      = true;
+let sovereignId      = null;
+let myPodId          = null;
+let myNodeSlot       = 0;   // 0 = sovereign, 1/2/3 = follower squads
+let swarmLaunched    = false;
+const remoteDroneSquads = new Map(); // podId → [{x,y,z,...}]  (ALL connected pods incl. staging)
+const _activePodIds     = new Set(); // podIds that have clicked Join Formation (fully integrated)
+let _inStagingArea          = false;   // follower is at congregation point awaiting join
+let _pendingFormationTargets = null;   // FORMATION_TARGETS buffered while in staging
+let _stagingVisitorCount     = 0;      // sovereign: how many followers are staging
+let _chargingInterval        = null;   // battery recharge timer while landed
+let _animFrame       = null;
+
+// ── HUD state ─────────────────────────────────────────────────────────────────
+let _hudFormationName    = "";      // currently displayed formation name
+let _hudFormationTs      = 0;       // timestamp when formation last changed (for fade)
+let _hudFormationElapsed = 0;       // ms since formation started
+let _greenPctSaved       = 0;       // latest CO₂ % saved from sidecar
+let _meshPeers           = [];      // latest peer list for topology mini-map
+let _exitChannel         = null;    // BroadcastChannel opened once group key is known; used for GOODBYE on close
+/// Orphaned squad state — podId → { ts: timestamp_detected, phase: "detected"|"landing"|"gone" }
+const _orphanedSquads    = new Map();
+let _frameIdx        = 0;
+let _pyReqId         = 0;
+let _perfUlid        = null;
+let _perfStartMs     = 0;
+let _lastMeshMs      = 0;
+let _lastStatsMs     = 0;
+let _ollamaLive      = false;
+let _ollamaProbeTimer = null;
+
+// wllama
+let _wllamaClass = null, _wllama = null, _wllama_loaded = null;
+let _useOllama = false, _ollamaModel = "llama3.2:3b";
+let _modelMutex = Promise.resolve();
+const _textDecoder = new TextDecoder();
+
+// Rotating R state
+let _ruvonBaseTargets = null;
+let _ruvonAngle = 0;
+let _rotationSpeed = 0.003;
+
+// commandBrain
+let _commandBrainReady = false, _pendingReqId = 0;
+
+// physics params (tweaked by learning loop)
+const physicsParams = { formWeight: 2.2, batteryDrain: 0.003 };
+
+// Canvas state
+let canvasW = 800, canvasH = 600;
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+async function init() {
+  const gpuCanvas = document.getElementById("webgpu-canvas");
+  const overlayCanvas = document.getElementById("overlay-canvas");
+
+  // WebGPU guard
+  const adapter = await navigator.gpu?.requestAdapter();
+  if (!adapter) {
+    document.getElementById("webgpu-banner").classList.add("show");
+    return;
+  }
+
+  const device = await adapter.requestDevice();
+
+  // Fit canvas to viewport
+  function resizeCanvas() {
+    const wrap = document.getElementById("canvas-wrap");
+    const w = wrap.clientWidth, h = wrap.clientHeight;
+    canvasW = w; canvasH = h;
+    gpuCanvas.width = w; gpuCanvas.height = h;
+    overlayCanvas.width = w; overlayCanvas.height = h;
+    renderer?.resize(w, h);
+    // Radius stays fixed so all tabs see the formation at the same angular size.
+    // (Do NOT change camera.radius on resize — that was what caused zoom drift.)
+  }
+  window.addEventListener("resize", resizeCanvas);
+
+  // Send GOODBYE before the tab closes so peers re-elect immediately instead of waiting 15 s.
+  // Post directly on a BroadcastChannel (synchronous, guaranteed delivery even on tab close).
+  // Also tell the worker to stop cleanly.
+  const _sendGoodbye = () => {
+    if (!myPodId || !_exitChannel) return;
+    try { _exitChannel.postMessage({ type: "GOODBYE", pod_id: myPodId }); } catch (_) {}
+    try { meshBrain?.postMessage({ type: "STOP" }); } catch (_) {}
+  };
+  window.addEventListener("pagehide",     _sendGoodbye);
+  window.addEventListener("beforeunload", _sendGoodbye);
+
+  // Camera — fixed world-space target so all tabs share the same coordinate origin.
+  camera = new OrbitCamera([WORLD_CX, WORLD_CY, WORLD_CZ]);
+  camera.radius          = WORLD_CAM_RADIUS;
+  camera._targetRadius   = WORLD_CAM_RADIUS;
+
+  // ── SAB: 64 drones × 16 floats × 4 bytes = 4096 bytes ──────────────────
+  sab    = new SharedArrayBuffer(DRONE_COUNT * SAB_FLOATS * 4);
+  f32View = new Float32Array(sab);
+
+  // Initialise drones in landed state — fixed world-space grid around WORLD_CX/WORLD_CZ.
+  // SAB.X = horizontal, SAB.Y = depth (→ WORLD_CZ), SAB.Z = altitude (0 = ground).
+  for (let i = 0; i < DRONE_COUNT; i++) {
+    const b = i * SAB_FLOATS;
+    const col = i % 8, row = Math.floor(i / 8);
+    const sx = WORLD_CX - WORLD_RADIUS + col * (WORLD_RADIUS * 2 / 7);  // horizontal
+    const sy = WORLD_CZ - WORLD_RADIUS + row * (WORLD_RADIUS * 2 / 7);  // depth (SAB.Y)
+    f32View[b + IX.X] = sx;   f32View[b + IX.Y] = sy;   f32View[b + IX.Z] = 0;   // altitude=0
+    f32View[b + IX.TX] = sx;  f32View[b + IX.TY] = sy;  f32View[b + IX.TZ] = 0;
+    f32View[b + IX.STATUS] = ST_LANDED;
+    f32View[b + IX.TIER]   = [1,2,3][Math.floor(Math.random()*3)] * (Math.random() < 0.15 ? 0 : 1) || 3;
+    f32View[b + IX.BATT]   = 80 + Math.random() * 20;
+  }
+  // Fix tiers to 1/2/3 distribution
+  for (let i = 0; i < DRONE_COUNT; i++) {
+    const b = i * SAB_FLOATS;
+    const r = Math.random();
+    f32View[b + IX.TIER] = r < 0.15 ? 1 : r < 0.5 ? 2 : 3;
+  }
+
+  // ── Renderer ─────────────────────────────────────────────────────────────
+  renderer = await initRenderer(device, gpuCanvas, DRONE_COUNT * 4); // up to 4 tabs
+  resizeCanvas();
+
+  // ── Physics workers (4 × 16 drones) ─────────────────────────────────────
+  physWorkers = [];
+  for (let i = 0; i < NUM_PHYS_WKRS; i++) {
+    const w = new Worker(new URL("./physics_worker.js", import.meta.url));
+    physWorkers.push(w);
+    w.onmessage = (e) => {
+      if (e.data.type === "FRAME_DONE") {
+        physDone++;
+        if (physDone >= NUM_PHYS_WKRS) {
+          physDone = 0;
+          onPhysicsDone();
+        }
+      }
+    };
+    w.postMessage({
+      type: "INIT", sab,
+      droneStart: i * 16, droneCount: 16,
+      workerIdx: i, totalDrones: DRONE_COUNT,
+      // Pass world-space bounds so physics clamping contains the formation volume.
+      // WORLD_CX = WORLD_CZ = 2000; formation spans ±WORLD_RADIUS (300) around centre.
+      // Using 2× the world centre gives a safe [0, 4000] clamp range in X and Y.
+      canvasW: WORLD_CX * 2, canvasH: WORLD_CZ * 2, canvasDepth: WORLD_CY * 4,
+    });
+  }
+
+  // ── Sidecar ───────────────────────────────────────────────────────────────
+  sidecarWorker = new Worker(new URL("./sidecar.js", import.meta.url));
+  sidecarWorker.onmessage = handleSidecarMsg;
+
+  // ── Pyodide worker ────────────────────────────────────────────────────────
+  pyodideWorker = new Worker(new URL("./pyodide_worker.js", import.meta.url));
+  pyodideWorker.onmessage = handlePyodideMsg;
+  pyodideWorker.postMessage({ type: "INIT" });
+
+  // ── Mesh brain ────────────────────────────────────────────────────────────
+  meshBrain = new Worker(new URL("./mesh_brain.js", import.meta.url), { type: "module" });
+  meshBrain.onmessage = handleMeshMsg;
+  const groupCode = generateGroupCode();
+  const isFounder = !new URLSearchParams(location.search).has("group");
+  meshBrain.postMessage({ type: "INIT", groupCode, is_founder: isFounder, peerJsConfig: {} });
+
+  // ── Command brain ─────────────────────────────────────────────────────────
+  commandBrain = new Worker(new URL("./command_brain.js", import.meta.url));
+  commandBrain.onmessage = handleCommandBrainMsg;
+  commandBrain.postMessage({ type: "INIT" });
+
+  // ── Camera events ─────────────────────────────────────────────────────────
+  let _mouseDown = false, _lastMX = 0, _lastMY = 0;
+  let _prevTouches = null;
+
+  gpuCanvas.addEventListener("mousedown", (e) => {
+    _mouseDown = true; _lastMX = e.clientX; _lastMY = e.clientY;
+  });
+  gpuCanvas.addEventListener("mousemove", (e) => {
+    if (!_mouseDown) return;
+    camera.onMouseDrag(e.clientX - _lastMX, e.clientY - _lastMY);
+    _lastMX = e.clientX; _lastMY = e.clientY;
+  });
+  window.addEventListener("mouseup", () => { _mouseDown = false; });
+  gpuCanvas.addEventListener("wheel", (e) => {
+    e.preventDefault(); camera.onWheel(e.deltaY);
+  }, { passive: false });
+  gpuCanvas.addEventListener("touchstart", (e) => {
+    camera.onTouchStart([...e.touches]);
+    _prevTouches = [...e.touches];
+  });
+  gpuCanvas.addEventListener("touchmove", (e) => {
+    e.preventDefault();
+    camera.onTouchMove([...e.touches], _prevTouches);
+    _prevTouches = [...e.touches];
+  }, { passive: false });
+
+  // Click to pick drone
+  gpuCanvas.addEventListener("click", (e) => {
+    if (!renderer || !f32View) return;
+    const rect = gpuCanvas.getBoundingClientRect();
+    const cx = e.clientX - rect.left, cy = e.clientY - rect.top;
+    const idx = renderer.pickDrone(cx, cy, camera);
+    if (idx >= 0) showGlassBox(idx);
+  });
+
+  // ── Sovereign link ────────────────────────────────────────────────────────
+  const sovLink = `${location.origin}${location.pathname}?group=${groupCode}`;
+  document.getElementById("sov-link-text").textContent = sovLink;
+
+  // Start render-only loop immediately (show landed drones)
+  startRenderLoop();
+
+  toast("Ruvon Swarm Studio 3D — WebGPU active");
+}
+
+// ── Render loop ───────────────────────────────────────────────────────────────
+
+// Render-only (no physics) — used before launch and for follower tabs
+function startRenderLoop() {
+  if (_animFrame) cancelAnimationFrame(_animFrame);
+  function renderOnly(t) {
+    camera.update();
+    // Update rotating R targets if needed (even while landed for visual)
+    if (currentPreset === "ruvon3d" && _ruvonBaseTargets && swarmLaunched) {
+      updateRotatingR();
+    }
+    renderer?.update(sab, camera, t, DRONE_COUNT);
+    updateOverlay();
+    if (swarmLaunched) {
+      sidecarWorker?.postMessage({ type: "FRAME_PING", t });
+    }
+    _animFrame = requestAnimationFrame(renderOnly);
+  }
+  _animFrame = requestAnimationFrame(renderOnly);
+}
+
+// Physics loop: post STEP → workers → FRAME_DONE → render → repeat
+function startPhysicsLoop() {
+  if (_animFrame) cancelAnimationFrame(_animFrame);
+  function dispatchStep(t) {
+    camera.update();
+    if (currentPreset === "ruvon3d" && _ruvonBaseTargets) updateRotatingR();
+    // Dispatch physics to workers
+    const preset = is3dPreset ? currentPreset : "2d_" + currentPreset;
+    physWorkers.forEach(w => w.postMessage({ type: "STEP", preset }));
+    sidecarWorker?.postMessage({ type: "FRAME_PING", t });
+    // Rendering happens in onPhysicsDone (called when all 4 workers reply)
+  }
+  _animFrame = requestAnimationFrame(dispatchStep);
+}
+
+// Called when all 4 physics workers have posted FRAME_DONE
+function onPhysicsDone() {
+  const t = performance.now();
+  renderer?.update(sab, camera, t, DRONE_COUNT, remoteDroneSquads);
+  updateOverlay();
+  _frameIdx++;
+
+  // Telemetry every 12 frames
+  if (_frameIdx % 12 === 0 && _perfUlid && swarmLaunched) {
+    recordTelemetry(_perfUlid, sab, DRONE_COUNT, _frameIdx).catch(() => {});
+  }
+
+  // Every tab broadcasts its own squad to the mesh every 100ms
+  if (t - _lastMeshMs > 100) {
+    broadcastSwarmState();
+    _lastMeshMs = t;
+  }
+
+  // Stats every 500ms
+  if (t - _lastStatsMs > 500) {
+    updateStats();
+    _lastStatsMs = t;
+  }
+
+  // Sidecar ops tick
+  sidecarWorker?.postMessage({ type: "OPS_TICK", ops: DRONE_COUNT });
+
+  // Next frame
+  _animFrame = requestAnimationFrame((_t) => {
+    const preset = is3dPreset ? currentPreset : "2d_" + currentPreset;
+    if (currentPreset === "ruvon3d" && _ruvonBaseTargets) updateRotatingR();
+    camera.update();
+    physWorkers.forEach(w => w.postMessage({ type: "STEP", preset }));
+    sidecarWorker?.postMessage({ type: "FRAME_PING", _t });
+  });
+}
+
+// ── Launch / Land ─────────────────────────────────────────────────────────────
+
+window.launchDrones = async function() {
+  if (swarmLaunched) return;
+  // Broadcast to all tabs so every squad launches together
+  meshBrain.postMessage({ type: "FLEET_ACTION_UPDATE", action: "launch" });
+  _localLaunch();
+};
+
+function _localLaunch() {
+  if (swarmLaunched) return;
+  swarmLaunched = true;
+  _stopBatteryCharging(); // stop charging as soon as motors spool
+
+  // Set status to SPOOLING
+  for (let i = 0; i < DRONE_COUNT; i++) {
+    const b = i * SAB_FLOATS;
+    if (f32View[b + IX.STATUS] === ST_OFFLINE) continue;
+    f32View[b + IX.STATUS] = ST_SPOOLING;
+  }
+
+  document.getElementById("swarm-status").textContent = "Spooling…";
+  document.getElementById("launch-btn").disabled = true;
+
+  // After spool (1.5s), set TAKING_OFF and assign hover targets
+  // Climb to formation-centre altitude so staging drones are at the same level as the formation
+  setTimeout(() => {
+    for (let i = 0; i < DRONE_COUNT; i++) {
+      const b = i * SAB_FLOATS;
+      if (f32View[b + IX.STATUS] === ST_OFFLINE) continue;
+      f32View[b + IX.STATUS] = ST_TAKING_OFF;
+      f32View[b + IX.TZ] = WORLD_CY;   // climb to formation altitude (SAB.Z = altitude axis)
+    }
+    document.getElementById("swarm-status").textContent = "Taking off…";
+    // Radius stays at WORLD_CAM_RADIUS — do not scale by canvas size
+
+    // After reach hover height, assign formation and enable physics loop
+    setTimeout(() => {
+      if (isSovereign) {
+        // Sovereign computes full fleet formation and broadcasts to followers
+        apply3d("ruvon3d");
+      } else {
+        // Follower: congregate at center, enable Join Formation button
+        _applyCongregateStagingArea();
+        _inStagingArea = true;
+        const joinBtn = document.getElementById("join-btn");
+        if (joinBtn) { joinBtn.textContent = "Join Formation"; joinBtn.disabled = false; }
+        _showJoinBtn(true);
+        toast("Assembled at staging point — click Join Formation to sync");
+      }
+      document.getElementById("swarm-status").textContent = "Flying";
+      startPhysicsLoop(); // switch to physics-driven loop
+      // each tab controls its own camera independently — no sync
+
+      // Start performance tracking
+      startPerformance("ruvon3d", DRONE_COUNT).then(id => {
+        _perfUlid = id;
+        _perfStartMs = Date.now();
+      });
+    }, 3000);
+
+  }, 1500);
+
+  toast("Launch sequence initiated — rotors spooling up");
+}
+
+window.landDrones = function() {
+  meshBrain.postMessage({ type: "FLEET_ACTION_UPDATE", action: "land" });
+  _localLand();
+};
+
+function _localLand() {
+  if (!swarmLaunched) return;
+  swarmLaunched = false;
+
+  // End performance session
+  if (_perfUlid) {
+    endPerformance(_perfUlid, sab, DRONE_COUNT, _perfStartMs).then(() => {
+      loadAndApplyTweaks(physicsParams).then(summary => {
+        document.getElementById("learning-status").textContent = summary;
+      });
+      _perfUlid = null;
+    });
+  }
+
+  // Set landing
+  for (let i = 0; i < DRONE_COUNT; i++) {
+    const b = i * SAB_FLOATS;
+    if (f32View[b + IX.STATUS] === ST_OFFLINE) continue;
+    f32View[b + IX.STATUS] = ST_LANDING;
+    f32View[b + IX.TZ] = 0;
+  }
+
+  // Reset staging state
+  _inStagingArea = false;
+  _pendingFormationTargets = null;
+  _showJoinBtn(false);
+
+  document.getElementById("swarm-status").textContent = "Landing…";
+  document.getElementById("launch-btn").disabled = false;
+
+  camera.animateToRadius(WORLD_CAM_RADIUS * 0.7);
+  startRenderLoop(); // switch back to render-only
+
+  toast("Landing all drones");
+
+  // Begin battery recharging once drones are on the ground
+  setTimeout(_startBatteryCharging, 2500);
+}
+
+// ── Formations ────────────────────────────────────────────────────────────────
+
+function setActivePresetBtn(preset, is3d) {
+  document.querySelectorAll(".preset-btn").forEach(b => b.classList.remove("active"));
+  const id = is3d ? "presets-3d" : null;
+  document.querySelectorAll(".preset-btn").forEach(b => {
+    if (b.textContent.toLowerCase().replace(/\s/g,"").includes(preset.replace(/3d$/,"").toLowerCase())) {
+      b.classList.add("active");
+    }
+  });
+}
+
+// ── Fleet-wide formation helpers (sovereign computes for all squads) ──────────
+
+// Only count followers that have explicitly joined (clicked "Join Formation").
+// Staging followers are connected but not yet part of the active formation.
+// This ensures the formation is always a COMPLETE shape — never a partial slice.
+function _fleetDroneCount() {
+  return (1 + _activePodIds.size) * DRONE_COUNT;
+}
+
+function _buildSlotMap() {
+  // Sovereign is always slot 0; ACTIVE (joined) pods get slots 1, 2, …
+  const map = {};
+  if (myPodId) map[myPodId] = 0;
+  let slot = 1;
+  for (const podId of _activePodIds) map[podId] = slot++;
+  return map;
+}
+
+function _broadcastFormationTargets(pts, preset, is3d) {
+  if (remoteDroneSquads.size > 0) {
+    meshBrain.postMessage({ type: "FORMATION_TARGETS_UPDATE", targets: pts, preset, is3d, slotMap: _buildSlotMap() });
+  }
+}
+
+// Generate a non-zero 32-bit seed for deterministic formation math.
+// All tabs receive the same seed via FORMATION_INTENT → produce identical point clouds.
+function _makeSeed() {
+  let s = (Date.now() ^ Math.imul(0x9E3779B9, Math.random() * 0xFFFFFFFF | 0)) & 0x7FFFFFFF;
+  return s || 1; // never 0 (0 = non-deterministic in formation functions)
+}
+
+// Last intent state — used by _resendCurrentFormation after a new follower joins.
+let _lastIntentSeed = 0;
+let _lastIntentGlobalCount = 0;
+
+/**
+ * Broadcast a lightweight intent packet instead of raw coordinates.
+ * Each tab independently computes its own 64-point slice using the seed.
+ */
+function _broadcastFormationIntent(preset, is3d, seed, globalCount) {
+  if (remoteDroneSquads.size > 0) {
+    meshBrain.postMessage({
+      type:         "FORMATION_INTENT_UPDATE",
+      preset,
+      is3d,
+      seed,
+      global_count: globalCount,
+      slotMap:      _buildSlotMap(),
+    });
+  }
+  _lastIntentSeed = seed;
+  _lastIntentGlobalCount = globalCount;
+}
+
+/**
+ * Follower received a FORMATION_INTENT — compute this tab's own slice.
+ * No coordinate data was sent over the network; only the seed + slotMap.
+ */
+function _applyFormationIntentMsg(msg) {
+  currentPreset = msg.preset;
+  is3dPreset    = msg.is3d;
+  if (msg.slotMap && myPodId && msg.slotMap[myPodId] !== undefined) {
+    myNodeSlot = msg.slotMap[myPodId];
+  }
+
+  const slot   = myNodeSlot ?? 0;
+  const start  = slot * DRONE_COUNT;
+  const end    = start + DRONE_COUNT;
+  const seed   = msg.seed || 0;
+  const total  = msg.global_count || DRONE_COUNT;
+
+  // Guard: our slot falls outside this formation's range — the intent was broadcast
+  // before we joined. The sovereign will resend with the updated global_count after
+  // it processes our join_formation message. Skip silently and wait.
+  if (start >= total) {
+    meshLog(`FORMATION_INTENT deferred — slot ${slot} outside total=${total}, awaiting resend`, "#f0c070");
+    return;
+  }
+
+  let pts;
+  if (msg.is3d) {
+    pts = getFormationTargets3d(msg.preset, total, start, end, seed);
+  } else {
+    const pts2d = getFormationTargets(msg.preset, total, start, end, seed);
+    pts = pts2d.map(p => ({ x: p.x, y: p.y, z: 0.5 }));
+  }
+
+  // Guard: formation fn returned fewer points than expected (shouldn't happen, but be safe)
+  if (!pts?.length) {
+    meshLog(`FORMATION_INTENT empty slice slot=${slot} [${start}–${end}) total=${total}`, "#f07070");
+    return;
+  }
+
+  writeTargetsToSAB(pts);
+  _hudFormationName = msg.preset;
+  _hudFormationTs   = performance.now();
+  meshLog(`FORMATION_INTENT applied  preset=${msg.preset}  slot=${slot}  [${start}–${end})  total=${total}  seed=${seed}`, "#7ed9a0");
+}
+
+// ── Congregation staging area ─────────────────────────────────────────────────
+// Follower drones cluster at the fixed world centre while waiting to join formation.
+function _applyCongregateStagingArea() {
+  const CLUSTER_R = 110; // compact sunflower cluster radius
+
+  for (let i = 0; i < DRONE_COUNT; i++) {
+    const b = i * SAB_FLOATS;
+    const t = i / DRONE_COUNT;
+    const r = CLUSTER_R * Math.sqrt(t);         // sunflower radial fill
+    const a = i * Math.PI * (3 - Math.sqrt(5)); // golden angle spacing
+    f32View[b + IX.TX] = WORLD_CX + r * Math.cos(a); // horizontal (SAB.X)
+    f32View[b + IX.TY] = WORLD_CZ + r * Math.sin(a); // depth      (SAB.Y → WORLD_CZ)
+    f32View[b + IX.TZ] = WORLD_CY;                    // altitude   (SAB.Z → WORLD_CY = 345)
+  }
+}
+
+function _showJoinBtn(show) {
+  const btn = document.getElementById("join-btn");
+  if (btn) btn.style.display = show ? "block" : "none";
+}
+
+function _updateStagingNotice(delta = 0) {
+  _stagingVisitorCount = Math.max(0, _stagingVisitorCount + delta);
+  const el = document.getElementById("staging-notice");
+  if (!el) return;
+  if (_stagingVisitorCount > 0) {
+    el.style.display = "block";
+    el.textContent = `⏳ ${_stagingVisitorCount} node${_stagingVisitorCount > 1 ? 's' : ''} staging — awaiting join`;
+  } else {
+    el.style.display = "none";
+  }
+}
+
+// ── Battery charging (while all drones are landed) ────────────────────────────
+function _startBatteryCharging() {
+  if (_chargingInterval) return;
+  document.getElementById("batt-charging-row").style.display = "flex";
+  _chargingInterval = setInterval(() => {
+    let total = 0;
+    for (let i = 0; i < DRONE_COUNT; i++) {
+      const b = i * SAB_FLOATS;
+      const st = f32View[b + IX.STATUS];
+      if (st === ST_LANDED || st === ST_OFFLINE) {
+        f32View[b + IX.BATT] = Math.min(100, f32View[b + IX.BATT] + 0.4); // ~4%/s
+      }
+      total += f32View[b + IX.BATT];
+    }
+    const avg = Math.round(total / DRONE_COUNT);
+    const el = document.getElementById("batt-avg");
+    if (el) el.textContent = avg + "%";
+    if (avg >= 100) { _stopBatteryCharging(); }
+  }, 100);
+}
+
+function _stopBatteryCharging() {
+  if (_chargingInterval) {
+    clearInterval(_chargingInterval);
+    _chargingInterval = null;
+  }
+  document.getElementById("batt-charging-row").style.display = "none";
+}
+
+// ── Extract FORMATION_TARGETS application (shared between live apply + join) ──
+function _applyFormationTargetsMsg(msg) {
+  currentPreset = msg.preset;
+  is3dPreset    = msg.is3d;
+  if (msg.slotMap && myPodId && msg.slotMap[myPodId] !== undefined) {
+    myNodeSlot = msg.slotMap[myPodId];
+  }
+  if (msg.preset === "ruvon3d") {
+    _ruvonBaseTargets = msg.targets;
+    _ruvonAngle = 0;
+  } else {
+    _ruvonBaseTargets = null;
+    const start = myNodeSlot * DRONE_COUNT;
+    const slice = msg.targets.slice(start, start + DRONE_COUNT);
+    writeTargetsToSAB(slice.length ? slice : msg.targets.slice(0, DRONE_COUNT));
+  }
+  setActivePresetBtn(msg.preset, msg.is3d);
+}
+
+window.apply3d = function(preset) {
+  if (!isSovereign) {
+    // Follower: relay command to sovereign, which will broadcast targets back
+    meshBrain.postMessage({ type: "REMOTE_COMMAND", cmd: { action: "formation3d", preset } });
+    return;
+  }
+  currentPreset = preset;
+  is3dPreset = true;
+  setActivePresetBtn(preset, true);
+
+  const total = _fleetDroneCount();
+
+  if (preset === "ruvon3d") {
+    _ruvonBaseTargets = getFormationTargets3d("ruvon3d", total);
+    _ruvonAngle = 0;
+    // ruvon3d rotates per-frame — keep coordinate path so followers get the base array
+    _broadcastFormationTargets(_ruvonBaseTargets, "ruvon3d", true);
+    return; // targets written per-frame in updateRotatingR()
+  }
+  _ruvonBaseTargets = null;
+
+  // Deterministic Sync: generate seed, write sovereign's own slice, broadcast intent only.
+  const seed = _makeSeed();
+  const pts  = getFormationTargets3d(preset, total, 0, DRONE_COUNT, seed); // slot 0
+  writeTargetsToSAB(pts);
+  _broadcastFormationIntent(preset, true, seed, total);
+  _hudFormationName = preset;
+  _hudFormationTs   = performance.now();
+  toast(`Formation: ${preset} (${total} drones)`);
+
+  if (_perfUlid && swarmLaunched) {
+    endPerformance(_perfUlid, sab, DRONE_COUNT, _perfStartMs).catch(()=>{});
+    startPerformance(preset, DRONE_COUNT).then(id => { _perfUlid = id; _perfStartMs = Date.now(); });
+  }
+};
+
+window.apply2d = function(preset) {
+  if (!isSovereign) {
+    meshBrain.postMessage({ type: "REMOTE_COMMAND", cmd: { action: "formation", preset } });
+    return;
+  }
+  currentPreset = preset;
+  is3dPreset = false;
+  _ruvonBaseTargets = null;
+  setActivePresetBtn(preset, false);
+
+  const total = _fleetDroneCount();
+
+  // Deterministic Sync: generate seed, write sovereign's own slice, broadcast intent only.
+  const seed  = _makeSeed();
+  const pts2d = getFormationTargets(preset, total, 0, DRONE_COUNT, seed); // slot 0
+  // z = 0.5 maps to formation centre altitude (cz + 0 = cz) — no elevation gap vs. staging
+  const pts3d = pts2d.map(p => ({ x: p.x, y: p.y, z: 0.5 }));
+  writeTargetsToSAB(pts3d);
+  _broadcastFormationIntent(preset, false, seed, total);
+  _hudFormationName = preset;
+  _hudFormationTs   = performance.now();
+  toast(`Formation: ${preset} (${total} drones)`);
+};
+
+window.applyText = function(content) {
+  if (!content?.trim()) return;
+  if (!isSovereign) {
+    meshBrain.postMessage({ type: "REMOTE_COMMAND", cmd: { action: "text", content: content.trim() } });
+    return;
+  }
+  _ruvonBaseTargets = null;
+  currentPreset = "text";
+  is3dPreset = false;
+  const total = _fleetDroneCount();
+  const pts2d = textFormation(content.trim(), total);
+  const pts3d = pts2d.map(p => ({ x: p.x, y: p.y, z: 0.5 }));
+  writeTargetsToSAB(pts3d.slice(0, DRONE_COUNT));
+  _broadcastFormationTargets(pts3d, "text", false);
+  _hudFormationName = `"${content.trim()}"`;
+  _hudFormationTs   = performance.now();
+  toast(`Text: "${content.trim()}"`);
+};
+
+// Visitor clicks "Join Formation" — launch if needed, then integrate into fleet
+window.requestJoinFormation = function() {
+  if (!swarmLaunched) {
+    // Mark staging immediately so any incoming FORMATION_TARGETS get buffered, not applied early
+    _inStagingArea = true;
+    const btn = document.getElementById("join-btn");
+    if (btn) { btn.textContent = "Launching…"; btn.disabled = true; }
+    meshLog("Join clicked — launching drones, entering staging", "#f0c070");
+    launchDrones();
+    // Button re-enables + label updates once staging area is reached (inside _localLaunch)
+    return;
+  }
+  // Already in staging area — apply buffered or request from sovereign
+  _inStagingArea = false;
+  _showJoinBtn(false);
+
+  if (_pendingFormationTargets) {
+    const msg = _pendingFormationTargets;
+    _pendingFormationTargets = null;
+    // Handle both legacy coordinate packets and new intent packets
+    if (msg.type === "FORMATION_INTENT") {
+      meshLog(`Join — applying buffered intent (preset=${msg.preset} seed=${msg.seed})  notifying sovereign`, "#7ed9a0");
+      _applyFormationIntentMsg(msg);
+    } else {
+      meshLog(`Join — applying buffered targets (preset=${msg.preset})  notifying sovereign`, "#7ed9a0");
+      _applyFormationTargetsMsg(msg);
+    }
+    // Notify sovereign so it adds us to the active fleet
+    meshBrain.postMessage({ type: "REMOTE_COMMAND", cmd: { action: "join_formation", podId: myPodId } });
+    toast("Formation joined!");
+  } else {
+    // Ask sovereign to (re)broadcast current formation, include our podId so
+    // sovereign can add us to the active fleet before recomputing
+    meshLog(`Join — no buffered targets, requesting from sovereign  podId=${myPodId?.slice(-6)}`, "#f0c070");
+    meshBrain.postMessage({ type: "REMOTE_COMMAND", cmd: { action: "join_formation", podId: myPodId } });
+    toast("Requesting formation from sovereign…");
+  }
+};
+
+function updateRotatingR() {
+  if (!_ruvonBaseTargets) return;
+  _ruvonAngle += _rotationSpeed;
+  const rotated = rotateAboutY(_ruvonBaseTargets, _ruvonAngle);
+  // Each tab applies its own slot's slice of the full-fleet rotation
+  const slice = rotated.slice(myNodeSlot * DRONE_COUNT, (myNodeSlot + 1) * DRONE_COUNT);
+  writeTargetsToSAB(slice.length ? slice : rotated);
+}
+
+// ── Parametric shape engine ───────────────────────────────────────────────────
+// LLM generates x(t), y(t), z(t) as math expression strings.
+// We evaluate them in a sandboxed scope with only Math functions exposed.
+
+function _evalParamExpr(expr, t) {
+  try {
+    // Build a function that only sees Math helpers + t — no DOM, no globals
+    const fn = new Function(
+      'sin','cos','tan','atan2','sqrt','abs','floor','ceil','round','min','max','exp','log','pow','PI','E','t',
+      `"use strict"; return (${expr});`
+    );
+    const v = fn(
+      Math.sin, Math.cos, Math.tan, Math.atan2, Math.sqrt, Math.abs,
+      Math.floor, Math.ceil, Math.round, Math.min, Math.max,
+      Math.exp, Math.log, Math.pow,
+      Math.PI, Math.E,
+      t
+    );
+    return isFinite(v) ? Math.max(0, Math.min(1, v)) : 0.5;
+  } catch { return 0.5; }
+}
+
+function _parametricToPoints(spec, n) {
+  const tMin = spec.t_min ?? 0;
+  const tMax = spec.t_max ?? (Math.PI * 2);
+  return Array.from({ length: n }, (_, i) => {
+    const t = n > 1 ? tMin + (i / (n - 1)) * (tMax - tMin) : tMin;
+    return {
+      x: _evalParamExpr(spec.fn_x, t),
+      y: _evalParamExpr(spec.fn_y, t),
+      z: _evalParamExpr(spec.fn_z ?? "0.5", t),
+    };
+  });
+}
+
+window.applyFormationSpec = function(spec) {
+  if (!spec?.fn_x || !spec?.fn_y) {
+    console.warn("[spec] missing fn_x/fn_y", spec);
+    return;
+  }
+  if (!isSovereign) {
+    meshBrain.postMessage({ type: "REMOTE_COMMAND", cmd: { action: "formation_spec", ...spec } });
+    return;
+  }
+  _ruvonBaseTargets = null;
+  _lastCustomSpec = spec;
+  const name = spec.name ?? "custom";
+  currentPreset = name;
+  is3dPreset = true;
+  setActivePresetBtn(name, true);
+
+  const total = _fleetDroneCount();
+  const pts = _parametricToPoints(spec, total);
+  writeTargetsToSAB(pts.slice(0, DRONE_COUNT));
+  _broadcastFormationTargets(pts, name, true);
+  _hudFormationName = name;
+  _hudFormationTs   = performance.now();
+  toast(`Formation: ${name} (${total} drones)`);
+};
+
+// Write normalized [0,1]³ targets into local SAB (always DRONE_COUNT entries).
+// Formation points are in [0,1]³ centered at 0.5 — we map to a uniform cubic
+// world volume so shapes are proportionally correct regardless of canvas aspect ratio.
+// All formation points are in [0,1]³ centred at 0.5.
+// z=0.5 → exactly cz (formation centre altitude) — 2D formations use this.
+// z≠0.5 → offset above/below cz — 3D formations use this.
+// No hoverZ fallback: staging uses _applyCongregateStagingArea() directly.
+function writeTargetsToSAB(normalizedPts) {
+  // SAB axis mapping (fixed — do not change):
+  //   SAB.X  → camera X  → horizontal    centre = WORLD_CX
+  //   SAB.Y  → camera Z  → depth         centre = WORLD_CZ   (p.y maps here)
+  //   SAB.Z  → camera Y  → altitude/up   centre = WORLD_CY   (p.z maps here)
+  // WORLD_CX = WORLD_CZ = 2000 (fixed), WORLD_CY = 345 (formation altitude).
+  const scale = WORLD_RADIUS * 2;  // 600 world units
+
+  for (let i = 0; i < DRONE_COUNT; i++) {
+    const b = i * SAB_FLOATS;
+    const p = normalizedPts[i] ?? normalizedPts[normalizedPts.length - 1];
+    f32View[b + IX.TX] = WORLD_CX + (p.x - 0.5) * scale;            // horizontal
+    f32View[b + IX.TY] = WORLD_CZ + (p.y - 0.5) * scale;            // depth
+    f32View[b + IX.TZ] = WORLD_CY + ((p.z ?? 0.5) - 0.5) * scale;  // altitude
+  }
+}
+
+// ── Command pipeline ──────────────────────────────────────────────────────────
+
+window.submitIntent = function() {
+  const input = document.getElementById("intent-input");
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = "";
+  document.getElementById("intent-status").textContent = "⟳ Processing…";
+
+  _pendingReqId++;
+  commandBrain?.postMessage({ type: "RESOLVE", text, reqId: _pendingReqId });
+};
+
+function handleCommandBrainMsg(e) {
+  const msg = e.data;
+  if (msg.type === "READY") {
+    _commandBrainReady = true;
+    document.getElementById("intent-status").textContent = "MiniLM ready";
+  } else if (msg.type === "COMMAND") {
+    document.getElementById("intent-status").textContent = "";
+    handleCommand({ action: msg.action, preset: msg.preset, content: msg.content });
+    dispatchToPyodide(msg.text || "", msg.preset, _fleetDroneCount());
+  } else if (msg.type === "ESCALATE") {
+    document.getElementById("intent-status").textContent = "⟳ LLM thinking…";
+    runWllamaMainThread(msg.text, msg.reqId);
+  }
+}
+
+function handleCommand(cmd) {
+  if (!cmd?.action) return;
+  // Formation commands: relay to sovereign if we're a follower.
+  // Sovereign's apply3d/apply2d/applyText already guard on isSovereign and relay.
+  switch (cmd.action) {
+    case "formation3d":      apply3d(cmd.preset ?? "sphere"); break;
+    case "formation":        apply2d(cmd.preset ?? "circle"); break;
+    case "formation_spec":   applyFormationSpec(cmd); break;
+    case "text":             applyText(cmd.content); break;
+    // Launch/land: all tabs act (broadcast handled inside launchDrones/landDrones)
+    case "launch":           launchDrones(); break;
+    case "land":             landDrones(); break;
+    case "scatter":          simAction("scatter"); break;
+    case "recover":          simAction("recover"); break;
+    case "rotate":
+    case "rotation":
+    case "spin":             apply3d("ruvon3d"); break;
+    case "join_formation":
+      // Sovereign: a follower clicked Join — add to active fleet then recompute formation
+      if (isSovereign) {
+        if (cmd.podId) _activePodIds.add(cmd.podId);
+        _resendCurrentFormation(); // recomputes for new _fleetDroneCount(), broadcasts slice to all
+        _updateStagingNotice(-1);
+        toast(`Fleet expanded — ${_fleetDroneCount()} active drones`);
+      }
+      break;
+    case "hover":
+    case "stop":             /* no-op: keep current formation */ break;
+    default: console.warn("[cmd]", cmd.action);
+  }
+}
+
+function dispatchToPyodide(command, preset, globalCount) {
+  if (!command) return;
+  const reqId = ++_pyReqId;
+  // Pass fleet count so build_intent uses the actual number of active drones
+  const msg = { type: "EXECUTE", command, reqId };
+  if (preset)      msg.preset       = preset;
+  if (globalCount) msg.global_count = globalCount;
+  pyodideWorker?.postMessage(msg);
+}
+
+// ── Pyodide messages ──────────────────────────────────────────────────────────
+
+function handlePyodideMsg(e) {
+  const msg = e.data;
+  if (msg.type === "LOG") {
+    const prefix = `[pyodide:${msg.level ?? "log"}]`;
+    if (msg.level === "error" || msg.level === "stderr") {
+      console.error(prefix, msg.text);
+      meshLog(`${prefix} ${(msg.text || "").slice(0, 120)}`, "#ff8080");
+    } else {
+      console.log(prefix, msg.text);
+    }
+  } else if (msg.type === "LOADING") {
+    const pct = msg.pct ?? 0;
+    document.getElementById("pyodide-stage").textContent = msg.stage ?? "Loading…";
+    document.getElementById("pyodide-pct").textContent = pct + "%";
+    document.getElementById("pyodide-bar").style.width = pct + "%";
+  } else if (msg.type === "READY") {
+    document.getElementById("pyodide-loading").style.display = "none";
+    document.getElementById("pyodide-ready").style.display = "flex";
+  } else if (msg.type === "WORKFLOW_STARTED") {
+    document.getElementById("workflow-ulid").textContent = msg.workflowId;
+    document.getElementById("workflow-step").textContent = "step 1/4 — ParseCommand";
+  } else if (msg.type === "STEP_COMPLETED") {
+    document.getElementById("workflow-step").textContent =
+      `step ${msg.stepNum}/${msg.totalSteps} — ${msg.step}`;
+  } else if (msg.type === "RESULT") {
+    document.getElementById("workflow-step").textContent = "✓ done";
+    // If the workflow produced a formation intent (from BuildIntent step), re-broadcast
+    // with the Python-derived deterministic seed (from workflow UUID bytes).
+    // Guard: only apply if the preset still matches — user may have changed formation
+    // while Pyodide was running.
+    const intent = msg.result?.intent;
+    if (intent?.preset && intent?.seed && isSovereign && swarmLaunched
+        && intent.preset === currentPreset) {
+      const total = _fleetDroneCount(); // always use live fleet count, not Python's cached value
+      const seed  = intent.seed;
+      const is3d  = intent.is3d ?? is3dPreset;
+      if (is3d) {
+        const pts = getFormationTargets3d(intent.preset, total, 0, DRONE_COUNT, seed);
+        writeTargetsToSAB(pts);
+      } else {
+        const pts2d = getFormationTargets(intent.preset, total, 0, DRONE_COUNT, seed);
+        writeTargetsToSAB(pts2d.map(p => ({ x: p.x, y: p.y, z: 0.5 })));
+      }
+      _broadcastFormationIntent(intent.preset, is3d, seed, total);
+      meshLog(`BuildIntent seed locked: preset=${intent.preset} seed=${seed}`, "#aad4ff");
+    }
+  } else if (msg.type === "LOG_RESULT") {
+    showGlassBoxLogs(msg.droneId, msg.entries);
+  } else if (msg.type === "ERROR") {
+    console.warn("[pyodide]", msg.message);
+  }
+}
+
+// ── Sidecar messages ──────────────────────────────────────────────────────────
+
+function handleSidecarMsg(e) {
+  const msg = e.data;
+  if (msg.type === "FRAME_STATS") {
+    const avgEl = document.getElementById("frame-avg");
+    const p95El = document.getElementById("frame-p95");
+    avgEl.textContent = msg.avgMs + " ms";
+    avgEl.className = "stat-value " + (msg.avgMs < 14 ? "good" : msg.avgMs < 20 ? "" : "warn");
+    p95El.textContent = msg.p95Ms + " ms";
+  } else if (msg.type === "THROTTLE_LLM") {
+    document.getElementById("llm-throttle").textContent = "Throttled";
+    document.getElementById("llm-throttle").className = "badge yellow";
+    commandBrain?.postMessage({ type: "THROTTLE" });
+  } else if (msg.type === "RESUME_LLM") {
+    document.getElementById("llm-throttle").textContent = "Normal";
+    document.getElementById("llm-throttle").className = "badge green";
+    commandBrain?.postMessage({ type: "RESUME" });
+  } else if (msg.type === "GREEN_STATS") {
+    document.getElementById("green-local").textContent = (msg.localW * 1e9).toFixed(1) + " nW";
+    document.getElementById("green-cloud").textContent = (msg.cloudW * 1e9).toFixed(1) + " nW";
+    document.getElementById("green-pct").textContent   = msg.pctSaved + "% less";
+    _greenPctSaved = msg.pctSaved ?? 0;
+  }
+}
+
+// ── Mesh brain messages ───────────────────────────────────────────────────────
+
+function handleMeshMsg(e) {
+  const msg = e.data;
+  if (msg.type === "READY") {
+    myPodId     = msg.pod_id;
+    isSovereign = msg.is_sovereign ?? true;
+    sovereignId = msg.is_sovereign ? msg.pod_id : null;
+    document.getElementById("sovereign-badge").textContent = msg.pod_id ?? "—";
+    meshLog(`READY  pod=${msg.pod_id}  role=${isSovereign ? "SOVEREIGN" : "follower"}`, isSovereign ? "#7ed9a0" : "#f0c070");
+    updateRoleUI();
+    // Open exit channel so we can send GOODBYE directly from the main thread on close.
+    if (msg.group_key && !_exitChannel) {
+      _exitChannel = new BroadcastChannel("ruvon-swarm:" + msg.group_key);
+    }
+  } else if (msg.type === "PEER_UPDATE") {
+    const count = msg.peers?.length ?? 0;
+    document.getElementById("peer-count").textContent = count;
+    _meshPeers = msg.peers ?? [];
+    // Remove squads from tabs that have left the mesh
+    const connectedPodIds = new Set((msg.peers ?? []).map(p => p.pod_id));
+    for (const podId of remoteDroneSquads.keys()) {
+      if (!connectedPodIds.has(podId)) {
+        remoteDroneSquads.delete(podId);
+        const wasActive = _activePodIds.delete(podId); // remove from active fleet too
+        if (wasActive && isSovereign && swarmLaunched) {
+          meshLog(`Peer left — recomputing for ${_fleetDroneCount()} drones`, "#f07070");
+          _resendCurrentFormation(); // recompute for smaller fleet
+        }
+      }
+    }
+    document.getElementById("node-count").textContent = (remoteDroneSquads.size + 1) * DRONE_COUNT;
+  } else if (msg.type === "ELECTION") {
+    const wasMe = isSovereign;
+    isSovereign = msg.is_me ?? (msg.sovereign_pod_id === myPodId);
+    sovereignId = isSovereign ? myPodId : msg.sovereign_pod_id;
+    meshLog(`ELECTION  sovereign=${msg.sovereign_pod_id}  me=${isSovereign}`, isSovereign ? "#7ed9a0" : "#f0c070");
+    updateRoleUI();
+    if (isSovereign && !wasMe) {
+      document.getElementById("leader-banner").classList.add("show");
+      setTimeout(() => document.getElementById("leader-banner").classList.remove("show"), 8000);
+      toast("YOUR MACHINE IS NOW THE SWARM LEADER");
+
+      // ── Sovereignty transition: inherit the full fleet ─────────────────────
+      // This tab was a follower (slot N). As new sovereign it is always slot 0.
+      myNodeSlot = 0;
+
+      // All pods currently in remoteDroneSquads are flying — treat them as active.
+      // (They were "joined" under the old sovereign; we inherit that state.)
+      _activePodIds.clear();
+      for (const podId of remoteDroneSquads.keys()) {
+        if (podId !== myPodId) _activePodIds.add(podId);
+      }
+
+      meshLog(
+        `Sovereignty acquired — slot=0, fleet=${_fleetDroneCount()} drones, active=[${[..._activePodIds].map(p=>p.slice(-6)).join(",")}]`,
+        "#7ed9a0",
+      );
+
+      // Rebroadcast current formation so followers get updated slotMap with new sovereign at slot 0.
+      if (swarmLaunched) {
+        setTimeout(() => _resendCurrentFormation(), 200); // brief delay so UI settles
+      }
+    }
+  } else if (msg.type === "REMOTE_SQUAD") {
+    // Another tab's 64-drone squad arrived — merge into render pool
+    if (msg.podId && msg.podId !== myPodId) {
+      const isNew = !remoteDroneSquads.has(msg.podId);
+      // Assign ourself a slot number on first remote contact (followers only)
+      if (isNew && !isSovereign && myNodeSlot === 0) {
+        myNodeSlot = remoteDroneSquads.size + 1;
+        meshLog(`Assigned node slot ${myNodeSlot}`, "#7ab0f0");
+      }
+      remoteDroneSquads.set(msg.podId, msg.drones);
+      document.getElementById("node-count").textContent = (remoteDroneSquads.size + 1) * DRONE_COUNT;
+      if (isSovereign && isNew) {
+        _updateStagingNotice(+1);
+        meshLog(`New pod staging: ${msg.podId.slice(-6)} — awaiting Join click`, "#f0c070");
+        toast(`New node staging — click Join Formation on visitor tab`);
+      }
+    }
+  } else if (msg.type === "SWARM_COMMAND") {
+    // Sovereign received a command relayed from a follower
+    meshLog(`SWARM_COMMAND  action=${msg.cmd?.action}  podId=${msg.cmd?.podId ?? "—"}`, "#c0a0f0");
+    handleCommand(msg.cmd);
+  } else if (msg.type === "FORMATION_TARGETS") {
+    // Follower received formation targets from sovereign (legacy / ruvon3d / text / parametric).
+    const slotKeys = msg.slotMap ? Object.keys(msg.slotMap).map(k => k.slice(-4) + "→" + msg.slotMap[k]).join(" ") : "—";
+    if (_inStagingArea) {
+      meshLog(`FORMATION_TARGETS buffered (staging)  preset=${msg.preset}  pts=${msg.targets?.length}`, "#f0c070");
+      _pendingFormationTargets = msg;
+      _showJoinBtn(true);
+    } else {
+      meshLog(`FORMATION_TARGETS applied  preset=${msg.preset}  pts=${msg.targets?.length}  slots=[${slotKeys}]`, "#7ed9a0");
+      _applyFormationTargetsMsg(msg);
+    }
+  } else if (msg.type === "FORMATION_INTENT") {
+    // Follower received an intent packet — compute own slice locally (no coordinates sent).
+    if (_inStagingArea) {
+      meshLog(`FORMATION_INTENT buffered (staging)  preset=${msg.preset}  seed=${msg.seed}`, "#f0c070");
+      _pendingFormationTargets = msg; // reuse pending slot — applyPending handles both types
+      _showJoinBtn(true);
+    } else {
+      _applyFormationIntentMsg(msg);
+    }
+  } else if (msg.type === "FLEET_ACTION") {
+    meshLog(`FLEET_ACTION  ${msg.action}`, "#7ab0f0");
+    if (msg.action === "launch") _localLaunch();
+    else if (msg.action === "land") _localLand();
+  } else if (msg.type === "RUN_INFERENCE") {
+    // mesh_brain distributed a LLM inference task to this tab
+    const { task_id, text } = msg;
+    meshLog(`RUN_INFERENCE task=${task_id?.slice(-6)} text="${text?.slice(0,40)}"`, "#c0a0f0");
+    (async () => {
+      try {
+        let result = null;
+        if (_useOllama && _ollamaLive) {
+          result = await runWithOllama(text);
+        } else {
+          const modelKey = document.getElementById("model-select")?.value ?? "SmolLM2-135M";
+          await ensureWllama(modelKey);
+          const r = await _wllama.createChatCompletion(
+            [{ role: "system", content: SYSTEM_PROMPT }, { role: "user", content: text }],
+            { nPredict: 150, temperature: 0.05 }
+          );
+          result = parseCommandMain(r.text ?? "");
+        }
+        meshBrain.postMessage({ type: "INFERENCE_RESULT", task_id, result: result ?? {} });
+      } catch (err) {
+        meshBrain.postMessage({ type: "INFERENCE_RESULT", task_id, result: {}, error: String(err) });
+      }
+    })();
+  } else if (msg.type === "FORMATION_ACK") {
+    meshLog(`FORMATION_ACK  preset=${msg.preset}`, "#7ed9a0");
+  } else if (msg.type === "PARTITIONED") {
+    meshLog("Network PARTITIONED (simulation)", "#ff6060");
+    toast("Network partitioned");
+  } else if (msg.type === "RESTORED") {
+    meshLog("Network RESTORED", "#7ed9a0");
+    toast("Network restored");
+  } else if (msg.type === "BATTERY_LOW_SIGNAL") {
+    meshLog(`BATTERY_LOW drone=${msg.droneId}`, "#f0c070");
+  }
+  // Task distribution / help-push events — log to mesh panel for visibility
+  else if (msg.type === "TASK_COMPLETED" || msg.type === "TASK_EXECUTED") {
+    meshLog(`${msg.type}  task=${msg.task?.type ?? "?"}`, "#6080a0");
+  } else if (msg.type === "TASK_ORPHANED") {
+    meshLog(`TASK_ORPHANED  id=${msg.task_id?.slice(-6)}  ${msg.reason ?? ""}`, "#f07070");
+  } else if (["HELP_OFFER_RECEIVED","HELP_SENT","HELP_OFFER_SENT","REMOTE_SEND"].includes(msg.type)) {
+    // Purely informational — suppress in production, uncomment to debug task routing:
+    // meshLog(`${msg.type}`, "#404060");
+  }
+}
+
+function updateRoleUI() {
+  const el = document.getElementById("role-indicator");
+  if (el) {
+    if (isSovereign) {
+      el.style.display = "none";
+    } else {
+      el.style.display = "block";
+      el.style.background = "#0a1f4e";
+      el.style.color = "#7ed9a0";
+      el.style.border = "1px solid #2a5a8a";
+      el.textContent = "✈️ PILOT MODE — commands sent to sovereign";
+    }
+  }
+  // On follower: show Join Formation as primary CTA before launch
+  // Do NOT touch the button state if drones are already in flight / staging
+  if (isSovereign) {
+    _showJoinBtn(false);
+  } else if (!swarmLaunched) {
+    const btn = document.getElementById("join-btn");
+    if (btn) { btn.textContent = "Join Formation"; btn.disabled = false; }
+    _showJoinBtn(true);
+  }
+  // If swarmLaunched && follower: button state is managed by _localLaunch / requestJoinFormation
+}
+
+// Resend current formation to newly-joined followers.
+// For standard presets: rebroadcast the existing seed (so all tabs converge on the same cloud).
+// For ruvon3d / text / parametric: keep coordinate path (special cases).
+function _resendCurrentFormation() {
+  if (!isSovereign) return;
+  if (currentPreset === "ruvon3d") {
+    const total = _fleetDroneCount();
+    _ruvonBaseTargets = getFormationTargets3d("ruvon3d", total);
+    _broadcastFormationTargets(_ruvonBaseTargets, "ruvon3d", true);
+  } else if (_lastCustomSpec && currentPreset === (_lastCustomSpec.name ?? "custom")) {
+    applyFormationSpec(_lastCustomSpec);
+  } else if (_lastIntentSeed && currentPreset && currentPreset !== "text") {
+    // Rebroadcast the same seed — new follower will compute its own slice with the same math.
+    // Recompute sovereign's own slice for the new fleet count.
+    const total = _fleetDroneCount();
+    if (is3dPreset) {
+      const pts = getFormationTargets3d(currentPreset, total, 0, DRONE_COUNT, _lastIntentSeed);
+      writeTargetsToSAB(pts);
+    } else {
+      const pts2d = getFormationTargets(currentPreset, total, 0, DRONE_COUNT, _lastIntentSeed);
+      writeTargetsToSAB(pts2d.map(p => ({ x: p.x, y: p.y, z: 0.5 })));
+    }
+    _broadcastFormationIntent(currentPreset, is3dPreset, _lastIntentSeed, total);
+  } else if (is3dPreset) {
+    apply3d(currentPreset);
+  } else {
+    apply2d(currentPreset);
+  }
+}
+
+// ── Camera sync ───────────────────────────────────────────────────────────────
+// Sovereign broadcasts its camera state every 3 seconds.
+// Followers apply the same phi/radius plus a per-slot theta offset so each browser
+// views the formation from a different azimuth:
+//   N pods → each pod is 360°/N apart, together covering all angles simultaneously.
+function applyCameraSync(_msg) {
+  // Camera sync removed — each tab controls its own viewport independently.
+}
+
+function broadcastSwarmState() {
+  const drones = [];
+  for (let i = 0; i < DRONE_COUNT; i++) {
+    const b = i * SAB_FLOATS;
+    drones.push({
+      id: i,
+      x: Math.round(f32View[b+IX.X]),  y: Math.round(f32View[b+IX.Y]),
+      z: Math.round(f32View[b+IX.Z]),
+      vx: +f32View[b+IX.VX].toFixed(2), vy: +f32View[b+IX.VY].toFixed(2),
+      vz: +f32View[b+IX.VZ].toFixed(2),
+      rotorPhase: +f32View[b+IX.ROTOR].toFixed(2),
+      status: f32View[b+IX.STATUS],
+      tier: f32View[b+IX.TIER],
+      battery: Math.round(f32View[b+IX.BATT]),
+    });
+  }
+  meshBrain.postMessage({ type: "SWARM_STATE_UPDATE", formation: currentPreset, drones });
+}
+
+function applyReceivedState3d(remoteDrones) {
+  for (const rd of remoteDrones) {
+    if (rd.id >= DRONE_COUNT) continue;
+    const b = rd.id * SAB_FLOATS;
+    f32View[b+IX.X]  = rd.x;   f32View[b+IX.Y]  = rd.y;   f32View[b+IX.Z]  = rd.z;
+    f32View[b+IX.VX] = rd.vx;  f32View[b+IX.VY] = rd.vy;  f32View[b+IX.VZ] = rd.vz;
+    f32View[b+IX.STATUS] = rd.status;
+    f32View[b+IX.TIER]   = rd.tier;
+    f32View[b+IX.BATT]   = rd.battery;
+  }
+}
+
+// ── wllama / Ollama ───────────────────────────────────────────────────────────
+
+window.onOllamaToggle = function(checked) {
+  _useOllama = checked;
+  document.getElementById("ollama-config").style.display = checked ? "flex" : "none";
+  document.getElementById("wllama-config").style.display = checked ? "none" : "flex";
+  if (checked) probeOllama();
+};
+
+window.onModelChange = function(key) {
+  _wllama = null; _wllama_loaded = null;
+};
+
+window.scheduleOllamaProbe = function() {
+  clearTimeout(_ollamaProbeTimer);
+  _ollamaProbeTimer = setTimeout(probeOllama, 800);
+};
+
+async function probeOllama() {
+  const url = document.getElementById("ollama-url")?.value?.trim();
+  if (!url) return;
+  _ollamaModel = document.getElementById("ollama-model")?.value?.trim() || "llama3.2:3b";
+  try {
+    const r = await fetch(url + "/api/tags", { signal: AbortSignal.timeout(2000) });
+    _ollamaLive = r.ok;
+  } catch { _ollamaLive = false; }
+  const dot = document.getElementById("hb-dot");
+  dot.className = "hb-dot" + (_ollamaLive ? " live" : "");
+}
+
+async function runWithOllama(text) {
+  const url = document.getElementById("ollama-url")?.value?.trim() || "http://localhost:11434";
+  _ollamaModel = document.getElementById("ollama-model")?.value?.trim() || "llama3.2:3b";
+  const ts = document.getElementById("token-stream");
+  document.getElementById("model-status").textContent = `⟳ Ollama (${_ollamaModel})…`;
+  ts.textContent = "";
+
+  const resp = await fetch(url + "/api/chat", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: _ollamaModel,
+      messages: [{ role:"system", content: SYSTEM_PROMPT }, { role:"user", content: text }],
+      stream: true,
+    }),
+  });
+  if (!resp.ok) throw new Error(`Ollama ${resp.status}`);
+
+  const reader = resp.body.getReader();
+  let acc = "", buf = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += _textDecoder.decode(value, { stream: true });
+    const lines = buf.split("\n"); buf = lines.pop();
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      try { const d = JSON.parse(line); const p = d.message?.content ?? ""; acc += p; ts.textContent += p; } catch {}
+    }
+  }
+  ts.textContent = "";
+  document.getElementById("model-status").textContent = "✓ Ollama";
+  return parseCommandMain(acc);
+}
+
+async function ensureWllama(modelKey) {
+  if (!_wllamaClass) {
+    const mod = await import(WLLAMA_CDN);
+    _wllamaClass = mod.Wllama;
+  }
+  if (_wllama && _wllama_loaded === modelKey) return;
+  if (_wllama) { try { await _wllama.exit(); } catch {} _wllama = null; }
+  const cfg = MODEL_CONFIGS[modelKey] ?? MODEL_CONFIGS["SmolLM2-135M"];
+  document.getElementById("model-status").textContent = `⬇ Loading ${modelKey}…`;
+  _wllama = new _wllamaClass(WLLAMA_PATHS, { logger:{ debug:()=>{}, log:()=>{}, warn:console.warn, error:console.error }});
+  await _wllama.loadModelFromHF(cfg.repo, cfg.file, {
+    n_ctx: 2048,
+    progressCallback: ({ loaded, total }) => {
+      if (total > 0)
+        document.getElementById("model-status").textContent = `⬇ ${modelKey} ${Math.round(loaded/total*100)}%`;
+    },
+  });
+  _wllama_loaded = modelKey;
+  document.getElementById("model-status").textContent = `✓ ${modelKey} loaded`;
+}
+
+function parseCommandMain(raw) {
+  const cleaned = raw.replace(/```[a-z]*\n?/gi, "").trim();
+  // Find the first '{' and the matching closing '}' at depth 0
+  const start = cleaned.indexOf("{");
+  if (start === -1) return null;
+  let depth = 0, end = -1;
+  for (let i = start; i < cleaned.length; i++) {
+    if (cleaned[i] === "{") depth++;
+    else if (cleaned[i] === "}") { depth--; if (depth === 0) { end = i; break; } }
+  }
+  if (end === -1) return null;
+  try {
+    const cmd = JSON.parse(cleaned.slice(start, end + 1));
+    if (cmd.action === "response" || cmd.action === "write" || cmd.action === "display") cmd.action = "text";
+    if (cmd.content && typeof cmd.content === "string") {
+      const segs = cmd.content.trim().split(" ");
+      if (segs.length > 1 && segs.every(s => s.length <= 3)) cmd.content = segs.join("");
+      else cmd.content = cmd.content.trim();
+    }
+    return cmd;
+  } catch { return null; }
+}
+
+async function runWllamaMainThread(text) {
+  _modelMutex = _modelMutex.then(async () => {
+    try {
+      let cmd;
+      if (_useOllama && _ollamaLive) {
+        cmd = await runWithOllama(text);
+      } else {
+        const modelKey = document.getElementById("model-select")?.value ?? "SmolLM2-135M";
+        await ensureWllama(modelKey);
+        document.getElementById("model-status").textContent = "⟳ Thinking…";
+        document.getElementById("token-stream").textContent = "";
+        const result = await _wllama.createChatCompletion(
+          [{ role:"system", content: SYSTEM_PROMPT }, { role:"user", content: text }],
+          {
+            nPredict: 150, temperature: 0.05,
+            onNewToken: (_tok, piece) => {
+              const s = piece instanceof Uint8Array ? _textDecoder.decode(piece, {stream:true}) : String(piece);
+              document.getElementById("token-stream").textContent += s;
+            },
+          }
+        );
+        document.getElementById("token-stream").textContent = "";
+        document.getElementById("model-status").textContent = "✓ done";
+        cmd = parseCommandMain(result.text ?? "");
+      }
+      if (cmd) {
+        handleCommand(cmd);
+        dispatchToPyodide(text, cmd.preset, _fleetDroneCount());
+        document.getElementById("intent-status").textContent = "";
+      } else {
+        document.getElementById("intent-status").textContent = "No action parsed";
+      }
+    } catch (err) {
+      console.error("[wllama]", err);
+      document.getElementById("intent-status").textContent = "Error: " + String(err).slice(0, 60);
+    }
+  });
+}
+
+// ── Sim actions ───────────────────────────────────────────────────────────────
+
+window.simAction = function(action) {
+  if (action === "fail") {
+    let count = 0;
+    for (let i = 0; i < DRONE_COUNT; i++) {
+      if (Math.random() < 0.1 && f32View[i*SAB_FLOATS+IX.STATUS] === ST_ACTIVE) {
+        f32View[i*SAB_FLOATS+IX.STATUS] = ST_OFFLINE;
+        count++;
+      }
+    }
+    toast(`${count} drones failed`);
+  } else if (action === "recover") {
+    for (let i = 0; i < DRONE_COUNT; i++) {
+      if (f32View[i*SAB_FLOATS+IX.STATUS] === ST_OFFLINE) {
+        f32View[i*SAB_FLOATS+IX.STATUS] = swarmLaunched ? ST_TAKING_OFF : ST_LANDED;
+        f32View[i*SAB_FLOATS+IX.TZ] = swarmLaunched ? WORLD_CY : 0;  // altitude axis (SAB.Z)
+      }
+    }
+    toast("All drones recovered");
+  } else if (action === "drain") {
+    for (let i = 0; i < DRONE_COUNT; i++) f32View[i*SAB_FLOATS+IX.BATT] = 12;
+    toast("Batteries drained");
+  } else if (action === "scatter") {
+    for (let i = 0; i < DRONE_COUNT; i++) {
+      const b = i * SAB_FLOATS;
+      f32View[b+IX.TX] = WORLD_CX + (Math.random() - 0.5) * WORLD_RADIUS * 2;  // horizontal
+      f32View[b+IX.TY] = WORLD_CZ + (Math.random() - 0.5) * WORLD_RADIUS * 2;  // depth
+      // IX.TZ (altitude) unchanged — maintain current height
+    }
+    currentPreset = "scatter"; is3dPreset = false; _ruvonBaseTargets = null;
+    toast("Drones scattered");
+  }
+};
+
+// ── Glass Box ─────────────────────────────────────────────────────────────────
+
+function showGlassBox(droneIdx) {
+  const statusNames = ["active","low_battery","offline","landed","spooling","taking_off","landing"];
+  const panel = document.getElementById("glass-box-panel");
+  panel.classList.add("show");
+
+  let tier, battery, status, alt, tgt, isRemote = false;
+
+  if (droneIdx < DRONE_COUNT) {
+    // Local drone — read from SAB
+    const b = droneIdx * SAB_FLOATS;
+    tier    = (f32View[b+IX.TIER]   ?? 0);
+    battery = (f32View[b+IX.BATT]   ?? 0);
+    status  = (f32View[b+IX.STATUS] ?? 0);
+    alt     = (f32View[b+IX.Z]      ?? 0);
+    tgt     = (f32View[b+IX.TZ]     ?? 0);
+  } else {
+    // Remote drone — read from remoteDroneSquads
+    isRemote = true;
+    const slot = Math.floor(droneIdx / DRONE_COUNT);
+    const localId = droneIdx % DRONE_COUNT;
+    const squads = [...remoteDroneSquads.values()];
+    const squad = squads[slot - 1]; // slot 0 = local, slot 1+ = remote squads
+    const d = squad?.[localId];
+    tier    = d?.tier    ?? 2;
+    battery = d?.battery ?? 0;
+    status  = d?.status  ?? 0;
+    alt     = d?.z       ?? 0;
+    tgt     = 0;
+  }
+
+  panel.innerHTML = `
+    <strong>Drone #${droneIdx}${isRemote ? " <span style='color:#4a7bc4'>[remote]</span>" : ""}</strong><br>
+    Tier ${Number(tier).toFixed(0)} &nbsp;|&nbsp;
+    Battery ${Number(battery).toFixed(0)}% &nbsp;|&nbsp;
+    ${statusNames[Math.round(status)] ?? "?"}<br>
+    Alt ${Number(alt).toFixed(0)}px / tgt ${Number(tgt).toFixed(0)}px<br>
+    ${isRemote ? "<em style='color:#3a5a8a'>Remote node — no local workflow logs</em>"
+               : "<em style='color:#3a5a8a'>Loading ruvon-edge logs…</em>"}
+  `;
+
+  if (!isRemote) {
+    pyodideWorker?.postMessage({ type: "QUERY_LOG", droneId: droneIdx, limit: 3, reqId: ++_pyReqId });
+  }
+}
+
+function showGlassBoxLogs(droneId, entries) {
+  const panel = document.getElementById("glass-box-panel");
+  if (!panel.classList.contains("show")) return;
+  if (!entries.length) {
+    panel.querySelector("em").textContent = "No workflow logs yet";
+    return;
+  }
+  const logHtml = entries.map(e =>
+    `<div style="margin-top:4px;color:#4a7bc4;font-family:monospace;font-size:10px;">
+      ${new Date(e.ts).toLocaleTimeString()} — ${e.command.slice(0,40)}<br>
+      <span style="color:#2a4a7a">${e.workflowId}</span>
+    </div>`
+  ).join("");
+  const em = panel.querySelector("em");
+  if (em) em.outerHTML = logHtml;
+}
+
+// ── Stats overlay ─────────────────────────────────────────────────────────────
+
+// ── Squad color palette (CSS hex, mirrors GHOST_COLORS in renderer_webgpu.js) ──
+const SQUAD_COLORS_CSS = [
+  "#00FF88", // slot 0 — sovereign green
+  "#00AAFF", // slot 1 — blue
+  "#00FFDD", // slot 2 — teal
+  "#FFCC00", // slot 3 — gold
+  "#CC00FF", // slot 4 — purple
+  "#FF6600", // slot 5 — orange
+  "#00CC66", // slot 6 — mint
+  "#FF3399", // slot 7 — pink
+];
+
+function _mySquadColor() {
+  return isSovereign ? SQUAD_COLORS_CSS[0] : SQUAD_COLORS_CSS[myNodeSlot % SQUAD_COLORS_CSS.length];
+}
+
+function updateOverlay() {
+  const cvs = document.getElementById("overlay-canvas");
+  if (!cvs) return;
+  const ctx = cvs.getContext("2d");
+  ctx.clearRect(0, 0, canvasW, canvasH);
+
+  const now = performance.now();
+
+  // ── 1. Formation name fade (2 s fade-in, 2 s hold, 2 s fade-out; total 6 s) ──
+  if (_hudFormationName) {
+    const age = now - _hudFormationTs;
+    const FADE_IN = 500, HOLD = 3000, FADE_OUT = 1500, TOTAL = FADE_IN + HOLD + FADE_OUT;
+    let alpha = 0;
+    if (age < FADE_IN)                    alpha = age / FADE_IN;
+    else if (age < FADE_IN + HOLD)        alpha = 1;
+    else if (age < TOTAL)                 alpha = 1 - (age - FADE_IN - HOLD) / FADE_OUT;
+    if (alpha > 0) {
+      const name = _hudFormationName.toUpperCase();
+      const fontSize = Math.max(28, Math.min(56, canvasW / 18));
+      ctx.save();
+      ctx.globalAlpha = alpha * 0.9;
+      ctx.font        = `700 ${fontSize}px "Courier New", monospace`;
+      ctx.textAlign   = "center";
+      ctx.textBaseline = "middle";
+      // Neon glow
+      ctx.shadowColor  = _mySquadColor();
+      ctx.shadowBlur   = 24;
+      ctx.fillStyle    = "#ffffff";
+      ctx.fillText(name, canvasW / 2, canvasH * 0.18);
+      // Subtitle: elapsed time
+      const elapsedSec = Math.floor(age / 1000);
+      const subFont = Math.max(12, fontSize * 0.38);
+      ctx.font      = `400 ${subFont}px "Courier New", monospace`;
+      ctx.shadowBlur = 8;
+      ctx.fillStyle  = _mySquadColor();
+      ctx.fillText(`${elapsedSec}s`, canvasW / 2, canvasH * 0.18 + fontSize * 0.9);
+      ctx.restore();
+    }
+  }
+
+  // ── 2. CO₂ badge (bottom-left) ───────────────────────────────────────────────
+  if (_greenPctSaved > 0) {
+    const pct = Math.round(_greenPctSaved);
+    ctx.save();
+    ctx.globalAlpha = 0.88;
+    const bx = 18, by = canvasH - 58, bw = 170, bh = 40, br = 8;
+    // Background pill
+    ctx.beginPath();
+    ctx.roundRect(bx, by, bw, bh, br);
+    ctx.fillStyle = "rgba(0,20,0,0.72)";
+    ctx.fill();
+    ctx.strokeStyle = "#00FF88";
+    ctx.lineWidth   = 1.5;
+    ctx.stroke();
+    // Text
+    ctx.font         = `700 15px "Courier New", monospace`;
+    ctx.fillStyle    = "#00FF88";
+    ctx.textAlign    = "left";
+    ctx.textBaseline = "middle";
+    ctx.shadowColor  = "#00FF88";
+    ctx.shadowBlur   = 8;
+    ctx.fillText(`⚡ ${pct}% LESS CO₂`, bx + 12, by + bh / 2);
+    ctx.restore();
+  }
+
+  // ── 3. Network topology mini-map (bottom-right corner) ───────────────────────
+  const MAP_R   = 54;   // arc radius for node placement
+  const MAP_CX  = canvasW  - MAP_R - 24;
+  const MAP_CY  = canvasH  - MAP_R - 24;
+  const MAP_BG  = 70;   // bounding box half-size
+  const STALE_WARN_MS  = 8000;   // peer going stale: dim line
+  const STALE_BREAK_MS = 15000;  // peer offline: break line + orphan
+
+  // Gather all nodes: own + peers
+  const allNodes = [];
+  allNodes.push({ pod_id: myPodId, slot: myNodeSlot, score: 1.0, isSelf: true, age_ms: 0 });
+  for (const p of _meshPeers) {
+    allNodes.push({ pod_id: p.pod_id, slot: allNodes.length, score: p.score ?? 0.5, isSelf: false, age_ms: p.age_ms ?? 0 });
+  }
+
+  if (allNodes.length > 1) {
+    ctx.save();
+    // Dark translucent background
+    ctx.globalAlpha = 0.72;
+    ctx.beginPath();
+    ctx.roundRect(MAP_CX - MAP_BG, MAP_CY - MAP_BG, MAP_BG * 2, MAP_BG * 2, 10);
+    ctx.fillStyle = "rgba(0,8,20,0.78)";
+    ctx.fill();
+    ctx.strokeStyle = "rgba(0,180,100,0.3)";
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+
+    // Place nodes in arc (full circle if ≥ 3, else line)
+    const nodePositions = allNodes.map((n, i) => {
+      const angle = (i / allNodes.length) * Math.PI * 2 - Math.PI / 2;
+      return { x: MAP_CX + Math.cos(angle) * MAP_R * 0.82, y: MAP_CY + Math.sin(angle) * MAP_R * 0.82, node: n };
+    });
+
+    // Draw connection lines first (under dots)
+    for (let i = 0; i < nodePositions.length; i++) {
+      for (let j = i + 1; j < nodePositions.length; j++) {
+        const a = nodePositions[i], b = nodePositions[j];
+        const maxAge = Math.max(a.node.age_ms, b.node.age_ms);
+        if (maxAge >= STALE_BREAK_MS) continue; // broken line
+        const staleness = Math.min(1, Math.max(0, (maxAge - STALE_WARN_MS) / (STALE_BREAK_MS - STALE_WARN_MS)));
+        const r = Math.round(staleness * 255);
+        const g = Math.round((1 - staleness) * 180);
+        ctx.beginPath();
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(b.x, b.y);
+        ctx.strokeStyle = `rgba(${r},${g},120,${0.55 - staleness * 0.4})`;
+        ctx.lineWidth   = 1.2;
+        ctx.stroke();
+      }
+    }
+
+    // Draw nodes
+    for (const { x, y, node } of nodePositions) {
+      const color   = isSovereign && node.isSelf
+        ? "#FFD700"  // sovereign = gold dot
+        : (node.isSelf
+          ? SQUAD_COLORS_CSS[myNodeSlot % SQUAD_COLORS_CSS.length]
+          : SQUAD_COLORS_CSS[node.slot % SQUAD_COLORS_CSS.length]);
+      const dotR    = 4 + Math.round(node.score * 4); // dot size = capability score
+      const isStale = !node.isSelf && node.age_ms >= STALE_BREAK_MS;
+
+      ctx.beginPath();
+      ctx.arc(x, y, dotR, 0, Math.PI * 2);
+      ctx.fillStyle    = isStale ? "rgba(255,60,60,0.5)" : color;
+      ctx.shadowColor  = isStale ? "#ff3c3c"            : color;
+      ctx.shadowBlur   = 10;
+      ctx.fill();
+      ctx.shadowBlur   = 0;
+
+      // Self: draw ring
+      if (node.isSelf) {
+        ctx.beginPath();
+        ctx.arc(x, y, dotR + 3, 0, Math.PI * 2);
+        ctx.strokeStyle = color;
+        ctx.lineWidth   = 1.2;
+        ctx.stroke();
+      }
+    }
+
+    // Label: "N nodes"
+    ctx.font         = `600 10px "Courier New", monospace`;
+    ctx.fillStyle    = "rgba(180,255,200,0.7)";
+    ctx.textAlign    = "center";
+    ctx.textBaseline = "bottom";
+    ctx.fillText(`${allNodes.length} NODES`, MAP_CX, MAP_CY + MAP_BG - 4);
+
+    ctx.restore();
+  }
+
+  // ── 4. Orphan emergency land (ghost squads heartbeat lost > STALE_BREAK_MS) ──
+  for (const peer of _meshPeers) {
+    if (peer.age_ms >= STALE_BREAK_MS) {
+      if (!_orphanedSquads.has(peer.pod_id)) {
+        _orphanedSquads.set(peer.pod_id, { ts: now, phase: "landing" });
+        meshLog(`Orphan detected: pod=${peer.pod_id.slice(-6)}  heartbeat lost ${Math.round(peer.age_ms/1000)}s ago`, "#ff6060");
+      }
+    }
+  }
+
+  // Animate orphan ghosts: spiral z toward ground over 5 s
+  for (const [podId, orphan] of _orphanedSquads) {
+    const ageSec = (now - orphan.ts) / 1000;
+    const landT  = Math.min(1, ageSec / 5);          // 0→1 over 5 s
+    const drones = remoteDroneSquads.get(podId);
+    if (drones) {
+      const spiral = ageSec * 0.8;                   // spiral angle speed
+      for (let i = 0; i < drones.length; i++) {
+        const d = drones[i];
+        // Spiral down: interpolate z toward 0 (ground), add small lateral drift
+        drones[i] = {
+          ...d,
+          z: d.z * (1 - landT * 0.04),              // gradual descent per frame
+          x: d.x + Math.sin(spiral + i) * 0.002 * landT,
+          y: d.y + Math.cos(spiral + i) * 0.002 * landT,
+        };
+      }
+    }
+
+    // After 5 s, remove from render pool
+    if (ageSec > 5) {
+      _orphanedSquads.delete(podId);
+      remoteDroneSquads.delete(podId);
+      meshLog(`Orphan pod=${podId.slice(-6)} cleared`, "#ff9060");
+    }
+  }
+}
+
+function updateStats() {
+  let active = 0, devSum = 0, altSum = 0, battSum = 0;
+  for (let i = 0; i < DRONE_COUNT; i++) {
+    const b = i * SAB_FLOATS;
+    const st = f32View[b+IX.STATUS];
+    if (st === ST_OFFLINE || st === ST_LANDED) continue;
+    active++;
+    const dx = f32View[b+IX.X] - f32View[b+IX.TX];
+    const dy = f32View[b+IX.Y] - f32View[b+IX.TY];
+    const dz = f32View[b+IX.Z] - f32View[b+IX.TZ];
+    devSum  += Math.hypot(dx, dy, dz);
+    altSum  += f32View[b+IX.Z];
+    battSum += f32View[b+IX.BATT];
+  }
+  const n = active || 1;
+  document.getElementById("stat-active").textContent = active;
+  document.getElementById("stat-dev").textContent    = (devSum/n).toFixed(1) + " px";
+  document.getElementById("stat-alt").textContent    = (altSum/n).toFixed(0) + " px";
+  document.getElementById("stat-batt").textContent   = (battSum/n).toFixed(0) + "%";
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+// ── Mesh log ──────────────────────────────────────────────────────────────────
+function meshLog(text, color) {
+  console.log("[mesh]", text);
+  const el = document.getElementById("mesh-log");
+  if (!el) return;
+  const line = document.createElement("div");
+  const ts = new Date().toLocaleTimeString("en", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  line.style.color = color || "#7ab0f0";
+  line.textContent = `${ts} ${text}`;
+  el.appendChild(line);
+  el.scrollTop = el.scrollHeight;
+  while (el.children.length > 60) el.removeChild(el.firstChild);
+}
+
+function generateGroupCode() {
+  // Honor sovereign link — if opened via ?group=..., join that group
+  const urlGroup = new URLSearchParams(location.search).get("group");
+  if (urlGroup) return urlGroup;
+  const words = ["RUVON","SWARM","APEX","SYNC","FLUX","MESH","NODE","EDGE"];
+  const w = words[Math.floor(Math.random() * words.length)];
+  const n = Math.random().toString(36).slice(2, 6).toUpperCase();
+  return `${w}-${n}`;
+}
+
+window.copySovLink = function() {
+  const text = document.getElementById("sov-link-text").textContent;
+  navigator.clipboard?.writeText(text).then(() => toast("Link copied!")).catch(()=>{});
+};
+
+let _toastTimer;
+window.toast = function(msg) {
+  const el = document.getElementById("toast");
+  el.textContent = msg; el.classList.add("show");
+  clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => el.classList.remove("show"), 3000);
+};
+
+// ── Bootstrap ─────────────────────────────────────────────────────────────────
+
+init().catch(err => {
+  console.error("[init]", err);
+  document.getElementById("webgpu-banner").innerHTML =
+    `<div style="font-size:48px;">⚠</div><div>Init error: ${err.message}</div>`;
+  document.getElementById("webgpu-banner").classList.add("show");
+});
+</script>
+</body>
+</html>

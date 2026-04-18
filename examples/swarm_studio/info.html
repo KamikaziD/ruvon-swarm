@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Ruvon Swarm Studio 3D — How It Works</title>
+<style>
+  :root {
+    --bg: #080e1a;
+    --surface: #0d1a2e;
+    --border: rgba(0,180,100,0.18);
+    --green: #00ff88;
+    --blue: #00aaff;
+    --teal: #00ffdd;
+    --dim: #7ab0f0;
+    --text: #cde;
+    --heading: #e8f4ff;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Inter", system-ui, sans-serif;
+    line-height: 1.65;
+    padding: 0 1rem 4rem;
+  }
+  a { color: var(--blue); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  header {
+    max-width: 860px;
+    margin: 0 auto;
+    padding: 3rem 0 2rem;
+    border-bottom: 1px solid var(--border);
+  }
+  header h1 {
+    font-size: clamp(1.6rem, 4vw, 2.6rem);
+    color: var(--heading);
+    letter-spacing: -0.02em;
+  }
+  header h1 span { color: var(--green); }
+  header p { margin-top: .6rem; color: var(--dim); font-size: 1.05rem; }
+
+  .tag {
+    display: inline-block;
+    background: rgba(0,255,136,.08);
+    border: 1px solid rgba(0,255,136,.25);
+    color: var(--green);
+    font-size: .75rem;
+    font-weight: 600;
+    letter-spacing: .06em;
+    padding: .15em .55em;
+    border-radius: 4px;
+    margin-right: .35rem;
+    margin-top: .5rem;
+  }
+
+  main { max-width: 860px; margin: 0 auto; }
+
+  section { margin-top: 3rem; }
+  h2 {
+    font-size: 1.3rem;
+    color: var(--heading);
+    border-left: 3px solid var(--green);
+    padding-left: .75rem;
+    margin-bottom: 1rem;
+  }
+  h3 { font-size: 1rem; color: var(--teal); margin: 1.4rem 0 .4rem; }
+
+  p { margin-bottom: .8rem; }
+
+  .card-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 1rem;
+    margin-top: 1rem;
+  }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1.1rem 1.2rem;
+  }
+  .card .icon { font-size: 1.6rem; margin-bottom: .5rem; }
+  .card h4 { color: var(--heading); font-size: .95rem; margin-bottom: .3rem; }
+  .card p { font-size: .87rem; color: var(--dim); margin: 0; }
+
+  .arch {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1.4rem 1.6rem;
+    font-family: "JetBrains Mono", "Fira Code", monospace;
+    font-size: .82rem;
+    color: var(--dim);
+    overflow-x: auto;
+    line-height: 1.5;
+    white-space: pre;
+  }
+  .arch .hi { color: var(--green); }
+  .arch .hi2 { color: var(--teal); }
+  .arch .hi3 { color: var(--blue); }
+
+  ol, ul { padding-left: 1.4rem; margin-bottom: .8rem; }
+  li { margin-bottom: .35rem; }
+
+  .steps { counter-reset: step; list-style: none; padding: 0; }
+  .steps li {
+    counter-increment: step;
+    display: flex;
+    gap: .85rem;
+    margin-bottom: .9rem;
+    align-items: flex-start;
+  }
+  .steps li::before {
+    content: counter(step);
+    flex-shrink: 0;
+    width: 1.7rem; height: 1.7rem;
+    border-radius: 50%;
+    background: rgba(0,255,136,.12);
+    border: 1px solid rgba(0,255,136,.35);
+    color: var(--green);
+    font-size: .8rem;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-top: .1rem;
+  }
+
+  .cta {
+    margin-top: 2.5rem;
+    display: flex;
+    gap: 1rem;
+    flex-wrap: wrap;
+  }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: .4rem;
+    padding: .65rem 1.4rem;
+    border-radius: 8px;
+    font-weight: 600;
+    font-size: .93rem;
+    cursor: pointer;
+    transition: opacity .15s;
+  }
+  .btn:hover { opacity: .85; text-decoration: none; }
+  .btn-primary { background: var(--green); color: #080e1a; }
+  .btn-secondary {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--dim);
+  }
+
+  footer {
+    max-width: 860px;
+    margin: 4rem auto 0;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--border);
+    font-size: .82rem;
+    color: #456;
+    display: flex;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: .5rem;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Ruvon <span>Swarm Studio 3D</span></h1>
+  <p>A live demonstration of ruvon-edge agents running entirely inside browser tabs, forming coordinated 3D drone swarms with no server required.</p>
+  <div>
+    <span class="tag">WebGPU</span>
+    <span class="tag">SharedArrayBuffer</span>
+    <span class="tag">Pyodide</span>
+    <span class="tag">ruvon-edge</span>
+    <span class="tag">BroadcastChannel mesh</span>
+    <span class="tag">Zero servers</span>
+  </div>
+</header>
+
+<main>
+
+  <section>
+    <h2>What you're looking at</h2>
+    <p>Each browser tab runs <strong>64 fully simulated drones</strong> under the control of a live <code>RuvonEdgeAgent</code> — the same Python runtime that powers payment terminals and industrial IoT gateways — compiled to WebAssembly via <a href="https://pyodide.org" target="_blank">Pyodide</a>.</p>
+    <p>Open multiple tabs from the same sovereign link and the tabs form a <strong>private fog network</strong>: they elect a leader, divide the formation space, and render a unified swarm with each browser contributing its own slice. Close any tab and the remaining nodes re-elect a new sovereign and recompute the fleet in under a second.</p>
+  </section>
+
+  <section>
+    <h2>Architecture at a glance</h2>
+    <div class="arch"><span class="hi">BROWSER TAB (sovereign)</span>                    <span class="hi">BROWSER TAB (follower N)</span>
+┌─────────────────────────────────┐            ┌──────────────────────────────────┐
+│  <span class="hi2">RuvonEdgeAgent (Pyodide/WASM)</span>   │            │  <span class="hi2">RuvonEdgeAgent (Pyodide/WASM)</span>    │
+│  DroneCommand workflow          │            │  DroneCommand workflow           │
+│  SwarmFormation workflow        │            │  SwarmFormation workflow         │
+├─────────────────────────────────┤            ├──────────────────────────────────┤
+│  <span class="hi3">mesh_brain.js (Worker)</span>          │◄──────────►│  <span class="hi3">mesh_brain.js (Worker)</span>           │
+│  BroadcastChannel gossip mesh   │            │  gossip + election follower      │
+│  Sovereign election (scored)    │            │  FORMATION_INTENT receiver       │
+├─────────────────────────────────┤            ├──────────────────────────────────┤
+│  <span class="hi2">physics_worker.js × 4 (SAB)</span>     │            │  <span class="hi2">physics_worker.js × 4 (SAB)</span>      │
+│  Reynolds flocking + PID alt    │            │  Reynolds flocking + PID alt     │
+│  Shared memory (SharedArrayBuf) │            │  Shared memory (SharedArrayBuf)  │
+├─────────────────────────────────┤            ├──────────────────────────────────┤
+│  <span class="hi">renderer_webgpu.js</span>              │            │  <span class="hi">renderer_webgpu.js</span>               │
+│  Instanced drone mesh           │            │  Instanced drone mesh            │
+│  LED glow + trails              │            │  Ghost dots for remote squads    │
+└─────────────────────────────────┘            └──────────────────────────────────┘
+              │ BroadcastChannel (same-device) · PeerJS (cross-device, planned)
+              └──────────────────────────────────────────────────────────────────►</div>
+  </section>
+
+  <section>
+    <h2>How to use the demo</h2>
+    <ol class="steps">
+      <li>Open the demo in any <strong>Chrome or Edge</strong> browser (WebGPU required). Firefox support coming when WebGPU ships in stable.</li>
+      <li>Click <strong>Launch Drones</strong>. 64 drones spool up and fly to the default Ruvon-R formation. This tab is the <em>sovereign</em> — it controls the swarm.</li>
+      <li>Copy the <strong>Sovereign Link</strong> shown in the top-left panel and paste it into a second tab or window. The second tab joins the mesh as a follower.</li>
+      <li>On the follower tab, click <strong>Join Formation</strong>. The sovereign expands the fleet to 128 drones and each tab renders its own 64-drone slice of the formation.</li>
+      <li>Add more tabs from the same link. Each adds another 64-drone squad. The formation math scales deterministically — no extra network traffic per drone.</li>
+      <li>Try the <strong>3D Formations</strong> panel: Sphere, Helix, DNA, Torus, Vortex, Wave, Cube.</li>
+      <li>Type a command in the <strong>Command</strong> box (e.g. <em>"form a sphere"</em>, <em>"scatter"</em>, <em>"land all"</em>). MiniLM matches it to the nearest preset; complex prompts escalate to wllama/Ollama.</li>
+      <li>Close the sovereign tab. The remaining tab detects the departure via GOODBYE broadcast, re-elects itself sovereign, and recomputes the fleet — all in under one second.</li>
+    </ol>
+  </section>
+
+  <section>
+    <h2>Key technology</h2>
+    <div class="card-grid">
+      <div class="card">
+        <div class="icon">🧠</div>
+        <h4>ruvon-edge in the browser</h4>
+        <p><code>RuvonEdgeAgent</code> runs via Pyodide (CPython → WASM). The full DroneCommand and SwarmFormation workflows execute as real Python — same code that runs on hardware edge devices.</p>
+      </div>
+      <div class="card">
+        <div class="icon">🌐</div>
+        <h4>BroadcastChannel mesh</h4>
+        <p>Tabs gossip via the Web BroadcastChannel API. A scored capability-vector election picks the sovereign. FOUNDING_BIAS ensures the original tab wins ties; stable pod_id tiebreaker prevents split-brain.</p>
+      </div>
+      <div class="card">
+        <div class="icon">⚡</div>
+        <h4>SharedArrayBuffer physics</h4>
+        <p>Four Web Workers share a SAB (64 drones × 16 f32 = 4 KB). Reynolds flocking + PID altitude run in parallel worker threads with zero serialization overhead.</p>
+      </div>
+      <div class="card">
+        <div class="icon">🎮</div>
+        <h4>WebGPU renderer</h4>
+        <p>Instanced drone meshes with LED glow, motion trails, and rotor animation. Ghost dots show remote squads. The camera is fully independent per tab — orbit, zoom, pan freely.</p>
+      </div>
+      <div class="card">
+        <div class="icon">🔢</div>
+        <h4>Deterministic sync</h4>
+        <p>Formation changes broadcast a seed + preset name (not coordinates). Each tab independently computes its own index slice using mulberry32 PRNG — bitwise-identical in JS and Python.</p>
+      </div>
+      <div class="card">
+        <div class="icon">🌿</div>
+        <h4>92% less CO₂</h4>
+        <p>Computation stays on the device. No round-trips to a cloud inference server. The green energy estimate in the HUD is calculated from active drone count and idle power displacement.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Sovereignty election</h2>
+    <p>Every tab runs a gossip heartbeat every ~2 s, broadcasting a <em>capability vector</em> (battery, CPU load, RAM, task queue). The mesh scores all pods and elects the highest-scoring one as sovereign.</p>
+    <h3>How split-brain is prevented</h3>
+    <ul>
+      <li><strong>Stable tiebreaker:</strong> scores are sorted by <code>(score DESC, pod_id ASC)</code> — all pods converge to the same winner even at identical scores.</li>
+      <li><strong>FOUNDING_BIAS (+0.40):</strong> the first tab opened gets a score bonus so it naturally stays sovereign while it's alive.</li>
+      <li><strong>Fresh election on conflict:</strong> if two pods simultaneously claim sovereignty (race after founder closes), both run a hysteresis-free election and the lower-ranking one yields immediately.</li>
+      <li><strong>Instant GOODBYE:</strong> closing a tab sends a GOODBYE directly on the BroadcastChannel (synchronous, main-thread), so peers re-elect in &lt;1 s instead of waiting for a 15 s stale timeout.</li>
+    </ul>
+
+    <h3>Sovereignty transfer</h3>
+    <p>When a follower is elected sovereign it:</p>
+    <ol>
+      <li>Resets its slot to 0 (sovereign is always slot 0).</li>
+      <li>Adopts all currently flying pods as active fleet members.</li>
+      <li>Rebroadcasts the current formation with the corrected slot map.</li>
+    </ol>
+  </section>
+
+  <section>
+    <h2>ruvon-swarm package</h2>
+    <p>The Python workflow logic is packaged as <a href="https://pypi.org/project/ruvon-swarm/" target="_blank"><code>ruvon-swarm</code></a> and installed inside Pyodide at runtime via micropip. It provides:</p>
+    <ul>
+      <li><strong>SwarmFormationState</strong> — Pydantic state model for formation commands</li>
+      <li><strong>DroneCommand workflow</strong> — 5-step YAML: ParseCommand → ValidateFormation → BuildIntent → LogFormation → ExecuteFormation</li>
+      <li><strong>build_intent step</strong> — returns a deterministic seed derived from the workflow ULID, which JS uses to compute formation slices</li>
+      <li><strong>mulberry32 PRNG</strong> — bitwise-identical implementation in both JS and Python so formation math can be validated server-side</li>
+    </ul>
+    <pre style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:1rem;font-size:.82rem;overflow-x:auto;margin-top:.8rem;color:var(--dim)">pip install ruvon-swarm</pre>
+  </section>
+
+  <section>
+    <h2>Run locally</h2>
+    <pre style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:1rem;font-size:.82rem;overflow-x:auto;color:var(--dim)">git clone https://github.com/KamikaziD/ruvon-swarm
+cd ruvon-swarm/examples/swarm_studio
+python serve.py          # serves on http://localhost:8081
+</pre>
+    <p style="margin-top:.6rem;font-size:.88rem;color:var(--dim)">The local server proxies the Pyodide CDN through localhost and adds the COOP/COEP headers required for SharedArrayBuffer. No installation needed beyond Python 3.9+.</p>
+
+    <div class="cta">
+      <a href="index.html" class="btn btn-primary">Launch Demo</a>
+      <a href="https://github.com/KamikaziD/ruvon-swarm" class="btn btn-secondary" target="_blank">GitHub</a>
+      <a href="https://kamazid.github.io/ruvon-docs/" class="btn btn-secondary" target="_blank">Documentation</a>
+      <a href="https://pypi.org/project/ruvon-swarm/" class="btn btn-secondary" target="_blank">PyPI</a>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <span>Ruvon Swarm Studio 3D · Apache-2.0</span>
+  <span>Built with ruvon-edge · WebGPU · Pyodide</span>
+</footer>
+
+</body>
+</html>

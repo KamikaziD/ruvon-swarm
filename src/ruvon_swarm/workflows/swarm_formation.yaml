@@ -1,0 +1,25 @@
+workflow_type: SwarmFormation
+description: "Deterministic intent-based formation broadcast for the Ruvon Private Fog Network"
+version: "1"
+initial_state_model_path: ruvon_swarm.state_models.SwarmFormationState
+steps:
+  - name: ParseCommand
+    type: STANDARD
+    function: ruvon_swarm.steps.formation.parse_command
+    automate_next: true
+  - name: ValidateFormation
+    type: STANDARD
+    function: ruvon_swarm.steps.formation.validate_formation
+    automate_next: true
+  - name: BuildIntent
+    type: STANDARD
+    function: ruvon_swarm.steps.formation.build_intent
+    automate_next: true
+  - name: LogFormation
+    type: FIRE_AND_FORGET
+    function: ruvon_swarm.steps.formation.log_formation
+    automate_next: true
+  - name: ExecuteFormation
+    type: STANDARD
+    function: ruvon_swarm.steps.formation.execute_formation
+    automate_next: true

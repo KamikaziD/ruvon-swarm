@@ -1,0 +1,16 @@
+{
+  "name": "Ruvon Swarm Studio 3D",
+  "short_name": "Swarm Studio 3D",
+  "description": "Agentic 3D drone swarm powered by ruvon-edge + WebGPU",
+  "start_url": "/index.html",
+  "display": "standalone",
+  "background_color": "#05080f",
+  "theme_color": "#0b0f1a",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='28'>⬡</text></svg>",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}

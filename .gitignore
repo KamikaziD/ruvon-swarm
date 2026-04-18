@@ -1,0 +1,21 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+*.whl
+.venv/
+venv/
+.env
+
+# Demo CDN cache (large binary files, downloaded on first run)
+examples/swarm_studio/pyodide-cache/
+
+# IDE
+.idea/
+.vscode/
+*.swp
