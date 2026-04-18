@@ -21,6 +21,10 @@
     self.addEventListener("activate", (e) => e.waitUntil(self.clients.claim()));
     self.addEventListener("fetch", (e) => {
       if (e.request.cache === "only-if-cached" && e.request.mode !== "same-origin") return;
+      // Don't attempt to proxy localhost/loopback requests — they can't be reached
+      // from a service worker running on GitHub Pages (or any remote origin).
+      const reqUrl = new URL(e.request.url);
+      if (reqUrl.hostname === "localhost" || reqUrl.hostname === "127.0.0.1" || reqUrl.hostname === "::1") return;
       e.respondWith(
         fetch(e.request).then((r) => {
           if (r.status === 0) return r;

@@ -265,6 +265,13 @@ _agent = RuvonEdgeAgent(
     platform_adapter=_adapter,
     persistence_provider=_persistence,
 )
+
+# Demo mode: suppress the cloud connectivity check so no fetch to localhost:0 is
+# made. The agent starts in offline/edge-only mode; all workflows run locally.
+import asyncio as _asyncio
+async def _no_connectivity_check(): return False
+_agent.sync_manager.check_connectivity = _no_connectivity_check
+
 await _agent.start()
 
 # Register workflows with config_manager and workflow_builder.
