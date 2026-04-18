@@ -2412,12 +2412,20 @@ window.toast = function(msg) {
 
 // ── Bootstrap ─────────────────────────────────────────────────────────────────
 
-init().catch(err => {
-  console.error("[init]", err);
-  document.getElementById("webgpu-banner").innerHTML =
-    `<div style="font-size:48px;">⚠</div><div>Init error: ${err.message}</div>`;
-  document.getElementById("webgpu-banner").classList.add("show");
-});
+if (!crossOriginIsolated) {
+  // Service worker is installing — it will reload this page once COOP/COEP headers
+  // are active and SharedArrayBuffer becomes available. Show a spinner and wait.
+  const banner = document.getElementById("webgpu-banner");
+  banner.innerHTML = `<div style="font-size:48px;">⏳</div><div>Activating secure context… reloading shortly</div>`;
+  banner.classList.add("show");
+} else {
+  init().catch(err => {
+    console.error("[init]", err);
+    document.getElementById("webgpu-banner").innerHTML =
+      `<div style="font-size:48px;">⚠</div><div>Init error: ${err.message}</div>`;
+    document.getElementById("webgpu-banner").classList.add("show");
+  });
+}
 </script>
 </body>
 </html>
