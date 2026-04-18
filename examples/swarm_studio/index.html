@@ -643,6 +643,31 @@ let canvasW = 800, canvasH = 600;
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 async function init() {
+  // SharedArrayBuffer requires cross-origin isolation (COOP + COEP headers).
+  // coi-serviceworker.js injects those headers and reloads. If the SW hasn't
+  // activated yet, trigger a reload ourselves via serviceWorker.ready which is
+  // more reliable than coi-serviceworker.js's own event-listener chain.
+  // sessionStorage prevents an infinite reload loop if the SW can't help.
+  if (!crossOriginIsolated) {
+    const tries = parseInt(sessionStorage.getItem("coiTries") || "0");
+    if (tries < 3) {
+      sessionStorage.setItem("coiTries", tries + 1);
+      if ("serviceWorker" in navigator) {
+        navigator.serviceWorker.ready.then(() => location.reload());
+      } else {
+        setTimeout(() => location.reload(), 800);
+      }
+    } else {
+      document.getElementById("webgpu-banner").innerHTML =
+        `<div style="font-size:48px;">⚠</div>` +
+        `<div>Cross-origin isolation unavailable after ${tries} attempts.<br>` +
+        `Try clearing site data (DevTools → Application → Clear storage) then reload.</div>`;
+      document.getElementById("webgpu-banner").classList.add("show");
+    }
+    return;
+  }
+  sessionStorage.removeItem("coiTries");
+
   const gpuCanvas = document.getElementById("webgpu-canvas");
   const overlayCanvas = document.getElementById("overlay-canvas");
 

@@ -35,7 +35,7 @@
           headers.set("Cross-Origin-Embedder-Policy", "require-corp");
           headers.set("Cross-Origin-Resource-Policy", "cross-origin");
           return new Response(r.body, { status: r.status, statusText: r.statusText, headers });
-        }).catch(() => {})
+        }).catch(() => Response.error())
       );
     });
     return;
