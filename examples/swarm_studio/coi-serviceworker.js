@@ -25,6 +25,8 @@
       // from a service worker running on GitHub Pages (or any remote origin).
       const reqUrl = new URL(e.request.url);
       if (reqUrl.hostname === "localhost" || reqUrl.hostname === "127.0.0.1" || reqUrl.hostname === "::1") return;
+      // fetch() cannot handle WebSocket upgrade requests — let the browser handle them natively
+      if (e.request.mode === "websocket") return;
       e.respondWith(
         fetch(e.request).then((r) => {
           if (r.status === 0) return r;
@@ -33,7 +35,7 @@
           headers.set("Cross-Origin-Embedder-Policy", "require-corp");
           headers.set("Cross-Origin-Resource-Policy", "cross-origin");
           return new Response(r.body, { status: r.status, statusText: r.statusText, headers });
-        })
+        }).catch(() => {})
       );
     });
     return;
