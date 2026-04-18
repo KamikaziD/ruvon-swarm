@@ -4,9 +4,6 @@
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>Ruvon Swarm Studio 3D — Private Fog Network</title>
-<!-- Cross-Origin Isolation: required for SharedArrayBuffer (SAB physics workers).
-     On GitHub Pages this service worker intercepts all responses and adds COOP/COEP headers. -->
-<script src="coi-serviceworker.js"></script>
 <link rel="manifest" href="manifest.json"/>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='28'>⬡</text></svg>"/>
 <style>
@@ -425,6 +422,9 @@ details > summary::-webkit-details-marker { display: none; }
 
 <div id="toast"></div>
 
+<!-- PeerJS — WebRTC DataChannel signaling for cross-device mesh -->
+<script src="peerjs.min.js"></script>
+
 <!-- ══ SCRIPT ════════════════════════════════════════════════════════════════ -->
 <script type="module">
 import { OrbitCamera }           from "./camera.js";
@@ -571,6 +571,12 @@ let _pendingFormationTargets = null;   // FORMATION_TARGETS buffered while in st
 let _stagingVisitorCount     = 0;      // sovereign: how many followers are staging
 let _chargingInterval        = null;   // battery recharge timer while landed
 let _animFrame       = null;
+
+// ── PeerJS cross-device state ─────────────────────────────────────────────────
+let _peer        = null;              // PeerJS Peer instance
+let _groupCode   = null;              // group key used to derive sovereign peer ID
+let _isFounder   = false;             // whether this tab is the sovereign founder
+const _remoteConns = new Map();       // peerId → DataConnection (open cross-device links)
 
 // ── HUD state ─────────────────────────────────────────────────────────────────
 let _hudFormationName    = "";      // currently displayed formation name
@@ -721,6 +727,11 @@ async function init() {
   const groupCode = generateGroupCode();
   const isFounder = !new URLSearchParams(location.search).has("group");
   meshBrain.postMessage({ type: "INIT", groupCode, is_founder: isFounder, peerJsConfig: {} });
+
+  // ── PeerJS cross-device mesh ─────────────────────────────────────────────
+  // Sovereign claims peer ID immediately; followers wait a moment so sovereign
+  // registers first on the PeerJS signaling server.
+  setTimeout(() => initPeerJS(groupCode, isFounder), isFounder ? 0 : 500);
 
   // ── Command brain ─────────────────────────────────────────────────────────
   commandBrain = new Worker(new URL("./command_brain.js", import.meta.url));
@@ -1572,6 +1583,12 @@ function handleMeshMsg(e) {
       if (swarmLaunched) {
         setTimeout(() => _resendCurrentFormation(), 200); // brief delay so UI settles
       }
+
+      // Re-claim the sovereign PeerJS peer ID so remote followers can reconnect.
+      // Delay 1.2 s to let the old sovereign's peer ID expire on the signaling server.
+      if (_groupCode) {
+        setTimeout(() => initPeerJS(_groupCode, true), 1200);
+      }
     }
   } else if (msg.type === "REMOTE_SQUAD") {
     // Another tab's 64-drone squad arrived — merge into render pool
@@ -1657,7 +1674,10 @@ function handleMeshMsg(e) {
     meshLog(`${msg.type}  task=${msg.task?.type ?? "?"}`, "#6080a0");
   } else if (msg.type === "TASK_ORPHANED") {
     meshLog(`TASK_ORPHANED  id=${msg.task_id?.slice(-6)}  ${msg.reason ?? ""}`, "#f07070");
-  } else if (["HELP_OFFER_RECEIVED","HELP_SENT","HELP_OFFER_SENT","REMOTE_SEND"].includes(msg.type)) {
+  } else if (msg.type === "REMOTE_SEND") {
+    // Relay this message to all remote peers via PeerJS DataChannels
+    _peerRelay(msg.msg);
+  } else if (["HELP_OFFER_RECEIVED","HELP_SENT","HELP_OFFER_SENT"].includes(msg.type)) {
     // Purely informational — suppress in production, uncomment to debug task routing:
     // meshLog(`${msg.type}`, "#404060");
   }
@@ -2260,6 +2280,89 @@ function generateGroupCode() {
   const w = words[Math.floor(Math.random() * words.length)];
   const n = Math.random().toString(36).slice(2, 6).toUpperCase();
   return `${w}-${n}`;
+}
+
+// ── PeerJS cross-device mesh ─────────────────────────────────────────────────
+// Relays messages to all open remote DataChannel connections.
+// PeerJS default (binary/msgpack) handles JS objects natively — no manual JSON needed.
+function _peerRelay(msg) {
+  if (_remoteConns.size === 0) return;
+  for (const [peerId, conn] of _remoteConns) {
+    if (conn.open) {
+      try { conn.send(msg); } catch (_) {}
+    } else {
+      _remoteConns.delete(peerId);
+    }
+  }
+}
+
+// Wires up a newly opened DataConnection (called for both sovereign and followers).
+function _setupPeerConn(conn) {
+  _remoteConns.set(conn.peer, conn);
+  meshLog(`PeerJS ↔ ${conn.peer.slice(-12)}`, "#7ed9a0");
+
+  conn.on("data", (m) => {
+    if (m?.type) meshBrain?.postMessage({ type: "REMOTE_MSG", msg: m });
+  });
+
+  conn.on("close", () => {
+    _remoteConns.delete(conn.peer);
+    meshLog(`PeerJS ✕ ${conn.peer.slice(-12)}`, "#f07070");
+    // Follower: attempt to reconnect to sovereign after 2 s
+    if (!_isFounder && _peer && !_peer.destroyed) {
+      setTimeout(() => _peerConnectToSovereign(), 2000);
+    }
+  });
+
+  conn.on("error", () => _remoteConns.delete(conn.peer));
+}
+
+function _peerConnectToSovereign() {
+  if (!_peer || _peer.destroyed || !_groupCode) return;
+  const sovereignPeerId = "ruvon-" + _groupCode;
+  if (_remoteConns.has(sovereignPeerId)) return; // already connected
+  const conn = _peer.connect(sovereignPeerId, { reliable: true });
+  conn.on("open", () => _setupPeerConn(conn));
+  conn.on("error", (err) => meshLog(`PeerJS: ${err.type}`, "#f07070"));
+}
+
+function initPeerJS(groupCode, isFounder) {
+  _groupCode = groupCode;
+  _isFounder = isFounder;
+  if (_peer && !_peer.destroyed) { _peer.destroy(); }
+
+  const sovereignPeerId = "ruvon-" + groupCode;
+  // Sovereign claims the stable group peer ID; followers use a random ID.
+  _peer = isFounder ? new Peer(sovereignPeerId) : new Peer();
+
+  _peer.on("open", (id) => {
+    meshLog(`PeerJS ready  ${isFounder ? "sovereign=" : "follower="}"${id.slice(-14)}"`, "#7ed9a0");
+    if (!isFounder) {
+      // Small delay so sovereign finishes registering first
+      setTimeout(() => _peerConnectToSovereign(), 300);
+    }
+  });
+
+  // Sovereign accepts incoming follower connections
+  _peer.on("connection", (conn) => {
+    conn.on("open", () => _setupPeerConn(conn));
+  });
+
+  _peer.on("error", (err) => {
+    if (err.type === "unavailable-id") {
+      // Another process already holds this peer ID — try with a suffix
+      meshLog(`PeerJS: peer ID taken, using fallback`, "#f0c070");
+      _peer = new Peer(sovereignPeerId + "-b");
+      _peer.on("open", () => {});
+      _peer.on("connection", (conn) => { conn.on("open", () => _setupPeerConn(conn)); });
+    } else {
+      meshLog(`PeerJS: ${err.type}`, "#f07070");
+    }
+  });
+
+  _peer.on("disconnected", () => {
+    if (!_peer.destroyed) _peer.reconnect();
+  });
 }
 
 window.copySovLink = function() {
