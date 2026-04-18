@@ -745,21 +745,22 @@ self.onmessage = (evt) => {
     }
 
     // Follower relays a command to the sovereign (formation change, etc.)
+    // Uses broadcastAll so the command reaches sovereign on remote devices too.
     case "REMOTE_COMMAND": {
-      broadcastLocal({ type: "SWARM_COMMAND", cmd: msg.cmd, pod_id: POD_ID, timestamp: Date.now() });
+      broadcastAll({ type: "SWARM_COMMAND", cmd: msg.cmd, pod_id: POD_ID, timestamp: Date.now() });
       break;
     }
 
     // Sovereign broadcasts formation targets to all follower tabs (legacy coordinate path)
     case "FORMATION_TARGETS_UPDATE": {
-      broadcastLocal({ type: "FORMATION_TARGETS", targets: msg.targets, preset: msg.preset, is3d: msg.is3d, slotMap: msg.slotMap, pod_id: POD_ID, timestamp: Date.now() });
+      broadcastAll({ type: "FORMATION_TARGETS", targets: msg.targets, preset: msg.preset, is3d: msg.is3d, slotMap: msg.slotMap, pod_id: POD_ID, timestamp: Date.now() });
       break;
     }
 
     // Sovereign broadcasts a formation INTENT packet — all tabs compute their own slice.
     // This replaces coordinate broadcasting at scale (100k drones = 0 coordinate data sent).
     case "FORMATION_INTENT_UPDATE": {
-      broadcastLocal({
+      broadcastAll({
         type:          "FORMATION_INTENT",
         preset:        msg.preset,
         is3d:          msg.is3d,
@@ -773,17 +774,15 @@ self.onmessage = (evt) => {
       break;
     }
 
-
-
     // Any tab broadcasts a fleet-wide action (launch / land) to all tabs
     case "FLEET_ACTION_UPDATE": {
-      broadcastLocal({ type: "FLEET_ACTION", action: msg.action, pod_id: POD_ID, timestamp: Date.now() });
+      broadcastAll({ type: "FLEET_ACTION", action: msg.action, pod_id: POD_ID, timestamp: Date.now() });
       break;
     }
 
-    // Every tab broadcasts its own squad state to all same-device tabs
+    // Every tab broadcasts its own squad state to all same-device (and remote) tabs
     case "SWARM_STATE_UPDATE": {
-      broadcastLocal({
+      broadcastAll({
         type: "SWARM_STATE",
         drones: msg.drones,
         formation: msg.formation,
