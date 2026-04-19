@@ -270,7 +270,8 @@ _agent = RuvonEdgeAgent(
 # made. The agent starts in offline/edge-only mode; all workflows run locally.
 import asyncio as _asyncio
 async def _no_connectivity_check(): return False
-_agent.sync_manager.check_connectivity = _no_connectivity_check
+if _agent.sync_manager is not None:
+    _agent.sync_manager.check_connectivity = _no_connectivity_check
 
 await _agent.start()
 
