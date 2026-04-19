@@ -571,6 +571,7 @@ let sab           = null;
 let f32View       = null;
 let physWorkers   = [];
 let physDone      = 0;
+let _sabFree      = false;   // true = ArrayBuffer fallback, physics runs in main thread
 let camera        = null;
 let renderer      = null;
 let meshBrain     = null;
@@ -643,43 +644,10 @@ let canvasW = 800, canvasH = 600;
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 async function init() {
-  const tries = parseInt(sessionStorage.getItem("coiTries") || "0");
+  _sabFree = typeof SharedArrayBuffer === "undefined" || !crossOriginIsolated;
   console.log("[RUVON] init() crossOriginIsolated:", crossOriginIsolated,
-              "| coiTries:", tries,
+              "| sabFree:", _sabFree,
               "| SW controller:", navigator.serviceWorker?.controller?.scriptURL ?? "none");
-
-  // SharedArrayBuffer requires cross-origin isolation (COOP + COEP headers).
-  if (!crossOriginIsolated) {
-    console.warn("[RUVON] Not cross-origin isolated — SW headers not yet active.");
-    if (tries < 3) {
-      sessionStorage.setItem("coiTries", tries + 1);
-      console.log("[RUVON] Waiting for SW ready then reloading (attempt", tries + 1, "of 3)...");
-      if ("serviceWorker" in navigator) {
-        navigator.serviceWorker.getRegistration().then(reg => {
-          console.log("[RUVON] SW registration:", reg,
-                      "| active:", reg?.active?.state,
-                      "| installing:", reg?.installing?.state);
-        });
-        navigator.serviceWorker.ready.then(() => {
-          console.log("[RUVON] SW ready — reloading");
-          location.reload();
-        });
-      } else {
-        setTimeout(() => location.reload(), 800);
-      }
-    } else {
-      console.error("[RUVON] crossOriginIsolated still false after", tries, "reloads — SW not working.");
-      document.getElementById("webgpu-banner").innerHTML =
-        `<div style="font-size:48px;">⚠</div>` +
-        `<div>Cross-origin isolation failed after ${tries} attempts.<br>` +
-        `Open DevTools → Application → Service Workers and check for errors.<br>` +
-        `Then: Application → Storage → Clear site data, and reload.</div>`;
-      document.getElementById("webgpu-banner").classList.add("show");
-    }
-    return;
-  }
-  sessionStorage.removeItem("coiTries");
-  console.log("[RUVON] Cross-origin isolated ✓ — starting init");
 
   const gpuCanvas = document.getElementById("webgpu-canvas");
   const overlayCanvas = document.getElementById("overlay-canvas");
@@ -722,9 +690,14 @@ async function init() {
   camera.radius          = WORLD_CAM_RADIUS;
   camera._targetRadius   = WORLD_CAM_RADIUS;
 
-  // ── SAB: 64 drones × 16 floats × 4 bytes = 4096 bytes ──────────────────
-  sab    = new SharedArrayBuffer(DRONE_COUNT * SAB_FLOATS * 4);
+  // ── Buffer: 64 drones × 16 floats × 4 bytes = 4096 bytes ───────────────
+  // Use SharedArrayBuffer when cross-origin isolated (enables parallel physics workers).
+  // Fall back to regular ArrayBuffer — physics runs inline in main thread instead.
+  sab    = _sabFree
+    ? new ArrayBuffer(DRONE_COUNT * SAB_FLOATS * 4)
+    : new SharedArrayBuffer(DRONE_COUNT * SAB_FLOATS * 4);
   f32View = new Float32Array(sab);
+  if (_sabFree) console.log("[RUVON] Using ArrayBuffer fallback — inline main-thread physics");
 
   // Initialise drones in landed state — fixed world-space grid around WORLD_CX/WORLD_CZ.
   // SAB.X = horizontal, SAB.Y = depth (→ WORLD_CZ), SAB.Z = altitude (0 = ground).
@@ -750,29 +723,30 @@ async function init() {
   renderer = await initRenderer(device, gpuCanvas, DRONE_COUNT * 4); // up to 4 tabs
   resizeCanvas();
 
-  // ── Physics workers (4 × 16 drones) ─────────────────────────────────────
+  // ── Physics workers (4 × 16 drones) — only when SAB is available ────────
   physWorkers = [];
-  for (let i = 0; i < NUM_PHYS_WKRS; i++) {
-    const w = new Worker(new URL("./physics_worker.js", import.meta.url));
-    physWorkers.push(w);
-    w.onmessage = (e) => {
-      if (e.data.type === "FRAME_DONE") {
-        physDone++;
-        if (physDone >= NUM_PHYS_WKRS) {
-          physDone = 0;
-          onPhysicsDone();
+  if (!_sabFree) {
+    for (let i = 0; i < NUM_PHYS_WKRS; i++) {
+      const w = new Worker(new URL("./physics_worker.js", import.meta.url));
+      physWorkers.push(w);
+      w.onmessage = (e) => {
+        if (e.data.type === "FRAME_DONE") {
+          physDone++;
+          if (physDone >= NUM_PHYS_WKRS) {
+            physDone = 0;
+            onPhysicsDone();
+          }
         }
-      }
-    };
-    w.postMessage({
-      type: "INIT", sab,
-      droneStart: i * 16, droneCount: 16,
-      workerIdx: i, totalDrones: DRONE_COUNT,
-      // Pass world-space bounds so physics clamping contains the formation volume.
-      // WORLD_CX = WORLD_CZ = 2000; formation spans ±WORLD_RADIUS (300) around centre.
-      // Using 2× the world centre gives a safe [0, 4000] clamp range in X and Y.
-      canvasW: WORLD_CX * 2, canvasH: WORLD_CZ * 2, canvasDepth: WORLD_CY * 4,
-    });
+      };
+      w.postMessage({
+        type: "INIT", sab,
+        droneStart: i * 16, droneCount: 16,
+        workerIdx: i, totalDrones: DRONE_COUNT,
+        canvasW: WORLD_CX * 2, canvasH: WORLD_CZ * 2, canvasDepth: WORLD_CY * 4,
+      });
+    }
+  } else {
+    console.log("[RUVON] Skipping physics workers — using inline main-thread physics");
   }
 
   // ── Sidecar ───────────────────────────────────────────────────────────────
@@ -867,17 +841,123 @@ function startRenderLoop() {
   _animFrame = requestAnimationFrame(renderOnly);
 }
 
+// ── Inline physics (SharedArrayBuffer-free fallback) ─────────────────────────
+// Mirrors physics_worker.js exactly but runs in the main thread using f32View.
+const _P = { GRAVITY:0.04, LIFT:0.18, Z_DAMP:0.94, LEAN:0.10, GND_EFF:20,
+             ROTOR_IDLE:0.3, ROTOR_FULL:1.0, BATT:0.003,
+             SEP_R:28, ALI_R:60, COH_R:80,
+             SEP_W:1.2, ALI_W:0.6, COH_W:0.4, FORM_W:2.2,
+             MAX_S:3.2, MAX_F:0.24, DAMP:0.96 };
+const _inlineSpoolTimers = new Float32Array(256);
+
+function _inlineReadAll() {
+  const out = [];
+  for (let i = 0; i < DRONE_COUNT; i++) {
+    const b = i * SAB_FLOATS;
+    out.push({ idx:i, x:f32View[b+IX.X], y:f32View[b+IX.Y],
+               vx:f32View[b+IX.VX], vy:f32View[b+IX.VY], status:f32View[b+IX.STATUS] });
+  }
+  return out;
+}
+
+function _inlineStepHoriz(i, allDrones, preset) {
+  const b = i * SAB_FLOATS, st = f32View[b+IX.STATUS];
+  if (st === ST_OFFLINE) return;
+  const txt = preset === "text";
+  const sepR = txt?14:_P.SEP_R, sepW=txt?0.3:_P.SEP_W, aliW=txt?0:_P.ALI_W;
+  const cohW = txt?0:_P.COH_W, frmW=txt?4.5:_P.FORM_W, maxS=txt?5:_P.MAX_S;
+  const x=f32View[b+IX.X], y=f32View[b+IX.Y], vx=f32View[b+IX.VX], vy=f32View[b+IX.VY];
+  let ax=0, ay=0, sepCnt=0, sx=0, sy=0, avx=0, avy=0, aliCnt=0, cx=0, cy=0, cohCnt=0;
+  for (const o of allDrones) {
+    if (o.idx===i||o.status===ST_OFFLINE) continue;
+    const dx=o.x-x, dy=o.y-y, d=Math.hypot(dx,dy);
+    if (d < sepR) { const w=(sepR-d)/sepR; sx+=(x-o.x)*w; sy+=(y-o.y)*w; sepCnt++; }
+    if (d < _P.ALI_R) { avx+=o.vx; avy+=o.vy; aliCnt++; }
+    if (d < _P.COH_R) { cx+=o.x;   cy+=o.y;   cohCnt++; }
+  }
+  if (sepCnt) { const m=Math.hypot(sx,sy)||1; ax+=sx/m*sepW*_P.MAX_F; ay+=sy/m*sepW*_P.MAX_F; }
+  if (aliW&&aliCnt) { avx/=aliCnt; avy/=aliCnt; const m=Math.hypot(avx-vx,avy-vy)||1; ax+=(avx-vx)/m*aliW*_P.MAX_F; ay+=(avy-vy)/m*aliW*_P.MAX_F; }
+  if (cohW&&cohCnt) { cx/=cohCnt; cy/=cohCnt; const m=Math.hypot(cx-x,cy-y)||1; ax+=(cx-x)/m*cohW*_P.MAX_F; ay+=(cy-y)/m*cohW*_P.MAX_F; }
+  const tdx=f32View[b+IX.TX]-x, tdy=f32View[b+IX.TY]-y, tdist=Math.hypot(tdx,tdy);
+  if (tdist>1){const sc=Math.min(tdist/60,1); ax+=tdx/tdist*frmW*_P.MAX_F*sc; ay+=tdy/tdist*frmW*_P.MAX_F*sc;}
+  const mf=_P.MAX_F*4, ma=Math.hypot(ax,ay); if(ma>mf){ax=ax/ma*mf;ay=ay/ma*mf;}
+  let nvx=vx+ax, nvy=vy+ay; nvx*=_P.DAMP; nvy*=_P.DAMP;
+  const mv=Math.hypot(nvx,nvy); if(mv>maxS){nvx=nvx/mv*maxS;nvy=nvy/mv*maxS;}
+  f32View[b+IX.VX]=nvx; f32View[b+IX.VY]=nvy;
+  f32View[b+IX.X]=Math.max(2,Math.min(WORLD_CX*2-2,x+nvx));
+  f32View[b+IX.Y]=Math.max(2,Math.min(WORLD_CZ*2-2,y+nvy));
+}
+
+function _inlineStepVert(i) {
+  const b=i*SAB_FLOATS, st=f32View[b+IX.STATUS];
+  if (st===ST_OFFLINE||st===ST_LANDED) {
+    f32View[b+IX.VZ]=0; f32View[b+IX.Z]=0; f32View[b+IX.THRUST]=0;
+    f32View[b+IX.ROTOR]+=_P.ROTOR_IDLE*0.05; return;
+  }
+  if (st===ST_SPOOLING) {
+    _inlineSpoolTimers[i]=(_inlineSpoolTimers[i]||0)+1;
+    const thrust=Math.min(1,_inlineSpoolTimers[i]/90);
+    f32View[b+IX.THRUST]=thrust; f32View[b+IX.ROTOR]+=_P.ROTOR_IDLE+thrust*(_P.ROTOR_FULL-_P.ROTOR_IDLE);
+    if(_inlineSpoolTimers[i]>=90){f32View[b+IX.STATUS]=ST_TAKING_OFF;_inlineSpoolTimers[i]=0;}
+    return;
+  }
+  const z=f32View[b+IX.Z], vz=f32View[b+IX.VZ], tz=f32View[b+IX.TZ];
+  const zErr=tz-z, ramp=Math.sign(zErr)*Math.min(Math.abs(zErr)/60,1);
+  const gEff=z<_P.GND_EFF?(1-z/_P.GND_EFF)*0.06:0;
+  const az=ramp*_P.LIFT-_P.GRAVITY+gEff, nvz=(vz+az)*_P.Z_DAMP, nz=Math.max(0,z+nvz);
+  f32View[b+IX.VZ]=nvz; f32View[b+IX.Z]=nz;
+  const thrust=Math.max(0,Math.min(1,(ramp*_P.LIFT+_P.GRAVITY)/_P.LIFT));
+  f32View[b+IX.THRUST]=thrust; f32View[b+IX.ROTOR]+=_P.ROTOR_IDLE+thrust*(_P.ROTOR_FULL-_P.ROTOR_IDLE);
+  f32View[b+IX.PITCH]=f32View[b+IX.VY]*_P.LEAN; f32View[b+IX.ROLL]=-f32View[b+IX.VX]*_P.LEAN;
+  if(st===ST_TAKING_OFF&&nz>=tz*0.95) f32View[b+IX.STATUS]=ST_ACTIVE;
+  if(st===ST_LANDING&&nz<=2){f32View[b+IX.STATUS]=ST_LANDED; f32View[b+IX.TZ]=0;}
+  const batt=f32View[b+IX.BATT];
+  if(batt>0){f32View[b+IX.BATT]=batt-_P.BATT; if(batt-_P.BATT<=15&&st===ST_ACTIVE)f32View[b+IX.STATUS]=ST_LOW_BAT;}
+}
+
+function _inlineStepFrame(preset) {
+  const allDrones = _inlineReadAll();
+  for (let i=0; i<DRONE_COUNT; i++) {
+    const st=f32View[i*SAB_FLOATS+IX.STATUS];
+    if(st!==ST_OFFLINE&&st!==ST_LANDED&&st!==ST_SPOOLING) _inlineStepHoriz(i,allDrones,preset);
+    _inlineStepVert(i);
+  }
+}
+
 // Physics loop: post STEP → workers → FRAME_DONE → render → repeat
+// When _sabFree (no SharedArrayBuffer), physics runs inline before render.
 function startPhysicsLoop() {
   if (_animFrame) cancelAnimationFrame(_animFrame);
+
+  if (_sabFree) {
+    // Inline physics mode — no workers, everything runs in this thread
+    function inlineStep(t) {
+      camera.update();
+      if (currentPreset === "ruvon3d" && _ruvonBaseTargets) updateRotatingR();
+      const preset = is3dPreset ? currentPreset : "2d_" + currentPreset;
+      _inlineStepFrame(preset);
+      renderer?.update(sab, camera, t, DRONE_COUNT, remoteDroneSquads);
+      updateOverlay();
+      _frameIdx++;
+      if (swarmLaunched) sidecarWorker?.postMessage({ type: "FRAME_PING", t });
+      if (t - _lastMeshMs > 100) { broadcastSwarmState(); _lastMeshMs = t; }
+      if (t - _lastStatsMs > 500) { updateStats(); _lastStatsMs = t; }
+      if (_frameIdx % 12 === 0 && _perfUlid && swarmLaunched) {
+        recordTelemetry(_perfUlid, sab, DRONE_COUNT, _frameIdx).catch(() => {});
+      }
+      sidecarWorker?.postMessage({ type: "OPS_TICK", ops: DRONE_COUNT });
+      _animFrame = requestAnimationFrame(inlineStep);
+    }
+    _animFrame = requestAnimationFrame(inlineStep);
+    return;
+  }
+
   function dispatchStep(t) {
     camera.update();
     if (currentPreset === "ruvon3d" && _ruvonBaseTargets) updateRotatingR();
-    // Dispatch physics to workers
     const preset = is3dPreset ? currentPreset : "2d_" + currentPreset;
     physWorkers.forEach(w => w.postMessage({ type: "STEP", preset }));
     sidecarWorker?.postMessage({ type: "FRAME_PING", t });
-    // Rendering happens in onPhysicsDone (called when all 4 workers reply)
   }
   _animFrame = requestAnimationFrame(dispatchStep);
 }
