@@ -643,30 +643,43 @@ let canvasW = 800, canvasH = 600;
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 async function init() {
+  const tries = parseInt(sessionStorage.getItem("coiTries") || "0");
+  console.log("[RUVON] init() crossOriginIsolated:", crossOriginIsolated,
+              "| coiTries:", tries,
+              "| SW controller:", navigator.serviceWorker?.controller?.scriptURL ?? "none");
+
   // SharedArrayBuffer requires cross-origin isolation (COOP + COEP headers).
-  // coi-serviceworker.js injects those headers and reloads. If the SW hasn't
-  // activated yet, trigger a reload ourselves via serviceWorker.ready which is
-  // more reliable than coi-serviceworker.js's own event-listener chain.
-  // sessionStorage prevents an infinite reload loop if the SW can't help.
   if (!crossOriginIsolated) {
-    const tries = parseInt(sessionStorage.getItem("coiTries") || "0");
+    console.warn("[RUVON] Not cross-origin isolated — SW headers not yet active.");
     if (tries < 3) {
       sessionStorage.setItem("coiTries", tries + 1);
+      console.log("[RUVON] Waiting for SW ready then reloading (attempt", tries + 1, "of 3)...");
       if ("serviceWorker" in navigator) {
-        navigator.serviceWorker.ready.then(() => location.reload());
+        navigator.serviceWorker.getRegistration().then(reg => {
+          console.log("[RUVON] SW registration:", reg,
+                      "| active:", reg?.active?.state,
+                      "| installing:", reg?.installing?.state);
+        });
+        navigator.serviceWorker.ready.then(() => {
+          console.log("[RUVON] SW ready — reloading");
+          location.reload();
+        });
       } else {
         setTimeout(() => location.reload(), 800);
       }
     } else {
+      console.error("[RUVON] crossOriginIsolated still false after", tries, "reloads — SW not working.");
       document.getElementById("webgpu-banner").innerHTML =
         `<div style="font-size:48px;">⚠</div>` +
-        `<div>Cross-origin isolation unavailable after ${tries} attempts.<br>` +
-        `Try clearing site data (DevTools → Application → Clear storage) then reload.</div>`;
+        `<div>Cross-origin isolation failed after ${tries} attempts.<br>` +
+        `Open DevTools → Application → Service Workers and check for errors.<br>` +
+        `Then: Application → Storage → Clear site data, and reload.</div>`;
       document.getElementById("webgpu-banner").classList.add("show");
     }
     return;
   }
   sessionStorage.removeItem("coiTries");
+  console.log("[RUVON] Cross-origin isolated ✓ — starting init");
 
   const gpuCanvas = document.getElementById("webgpu-canvas");
   const overlayCanvas = document.getElementById("overlay-canvas");
@@ -917,6 +930,7 @@ window.launchDrones = async function() {
 
 function _localLaunch() {
   if (swarmLaunched) return;
+  if (!f32View) { console.warn("[RUVON] _localLaunch: f32View not ready (init not complete)"); return; }
   swarmLaunched = true;
   _stopBatteryCharging(); // stop charging as soon as motors spool
 
