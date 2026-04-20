@@ -2200,25 +2200,36 @@ function _podIdToColorCSS(podId) {
 }
 
 // Draw formation-skeleton beams on the 2D overlay canvas.
-// Connects consecutive drones (i → i+1) with thin glowing lines — traces the
-// mathematical skeleton of the formation (Fibonacci spiral for sphere,
-// double strand for helix, concentric rings for torus, etc.).
+// Connects consecutive drones (i → i+1) only when they are within BEAM_MAX_DIST
+// world units of each other — this reveals each formation's mathematical skeleton
+// (Fibonacci ribbon on sphere, winding strands on helix, spiral cone on vortex,
+// clean wireframe edges on cube) without cross-interior diagonal artifacts.
+//
+// WORLD_RADIUS = 300 → scale = 600 world units across the formation volume.
+// Within-segment spacing for 64 drones:
+//   cube edge ~50 wu, helix step ~55 wu, sphere step ~55 wu, vortex max ~170 wu.
+// Cross-edge jump on cube: 300–800 wu → cleanly broken at threshold 220.
+const BEAM_MAX_DIST = 220; // world units; segments longer than this are not drawn
+const BEAM_MAX_DIST_SQ = BEAM_MAX_DIST * BEAM_MAX_DIST;
+
 function _drawFormationBeams(ctx, W, H) {
   if (!renderer || !swarmLaunched) return;
 
   const drawBeamPath = (positions, count, color, coordMode) => {
-    // coordMode "sab": positions is Float32Array [x,y,z ...] in GPU-Y-up world coords
-    // coordMode "obj": positions is Array of {x,y,z} objects in SAB coords (x=gnd-x, y=gnd-y, z=alt)
+    // coordMode "sab": Float32Array [x,y,z ...] in GPU-Y-up world coords (already projected basis)
+    // coordMode "obj": Array of {x,y,z} in SAB basis (z=altitude, y=ground-depth)
     ctx.save();
-    ctx.lineWidth   = 1.1;
+    ctx.lineWidth   = 1.0;
     ctx.lineCap     = "round";
     ctx.strokeStyle = color;
-    ctx.globalAlpha = 0.22;
+    ctx.globalAlpha = 0.20;
     ctx.shadowColor = color;
-    ctx.shadowBlur  = 5;
+    ctx.shadowBlur  = 4;
     ctx.beginPath();
 
     let penDown = false;
+    let pwx = 0, pwy = 0, pwz = 0; // previous world position
+
     for (let i = 0; i < count; i++) {
       let wx, wy, wz;
       if (coordMode === "sab") {
@@ -2227,9 +2238,17 @@ function _drawFormationBeams(ctx, W, H) {
         wz = positions[i*3+2];
       } else {
         const d = positions[i];
-        wx = d.x; wy = d.z; wz = d.y; // SAB Z=alt→GPU Y, SAB Y=gnd→GPU Z
+        wx = d.x; wy = d.z; wz = d.y; // SAB Z=alt→GPU Y, SAB Y=depth→GPU Z
       }
+
+      // Break the path if this step is too long (edge-to-edge jump, strand→rung, etc.)
+      if (penDown) {
+        const dx = wx - pwx, dy = wy - pwy, dz = wz - pwz;
+        if (dx*dx + dy*dy + dz*dz > BEAM_MAX_DIST_SQ) penDown = false;
+      }
+
       const [sx, sy, behind] = renderer.project(wx, wy, wz, W, H);
+      pwx = wx; pwy = wy; pwz = wz;
       if (behind) { penDown = false; continue; }
       if (!penDown) { ctx.moveTo(sx, sy); penDown = true; }
       else          { ctx.lineTo(sx, sy); }
@@ -2239,9 +2258,7 @@ function _drawFormationBeams(ctx, W, H) {
   };
 
   // Local squad beams
-  const localPos   = renderer.getLocalPositions();
-  const localCount = renderer.getLocalCount();
-  drawBeamPath(localPos, localCount, _mySquadColor(), "sab");
+  drawBeamPath(renderer.getLocalPositions(), renderer.getLocalCount(), _mySquadColor(), "sab");
 
   // Remote squad beams (ghost positions)
   for (const [podId, drones] of remoteDroneSquads) {
