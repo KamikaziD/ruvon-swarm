@@ -2474,9 +2474,23 @@ function _peerConnectToSovereign() {
   conn.on("error", (err) => meshLog(`PeerJS: ${err.type}`, "#f07070"));
 }
 
+// PeerJS reconnect state — shared across initPeerJS calls
+let _peerReconnectAttempts = 0;
+let _peerReconnectTimer    = null;
+const _PEER_MAX_ATTEMPTS   = 6;   // give up cross-device after 6 failed attempts (~2 min)
+const _PEER_BACKOFF_BASE   = 2000; // 2 s, 4 s, 8 s, 16 s, 32 s, 60 s
+
 function initPeerJS(groupCode, isFounder) {
   _groupCode = groupCode;
   _isFounder = isFounder;
+
+  // Cancel any pending reconnect before destroying the old peer
+  if (_peerReconnectTimer !== null) {
+    clearTimeout(_peerReconnectTimer);
+    _peerReconnectTimer = null;
+  }
+  _peerReconnectAttempts = 0;
+
   if (_peer && !_peer.destroyed) { _peer.destroy(); }
 
   const sovereignPeerId = "ruvon-" + groupCode;
@@ -2484,7 +2498,8 @@ function initPeerJS(groupCode, isFounder) {
   _peer = isFounder ? new Peer(sovereignPeerId) : new Peer();
 
   _peer.on("open", (id) => {
-    meshLog(`PeerJS ready  ${isFounder ? "sovereign=" : "follower="}"${id.slice(-14)}"`, "#7ed9a0");
+    _peerReconnectAttempts = 0;  // reset backoff on successful connect
+    meshLog(`PeerJS ↔ ${isFounder ? sovereignPeerId : id.slice(-14)}`, "#7ed9a0");
     if (!isFounder) {
       // Small delay so sovereign finishes registering first
       setTimeout(() => _peerConnectToSovereign(), 300);
@@ -2509,7 +2524,19 @@ function initPeerJS(groupCode, isFounder) {
   });
 
   _peer.on("disconnected", () => {
-    if (!_peer.destroyed) _peer.reconnect();
+    if (_peer.destroyed) return;
+    if (_peerReconnectAttempts >= _PEER_MAX_ATTEMPTS) {
+      meshLog(`PeerJS: cross-device unavailable (signaling server unreachable)`, "#f07070");
+      return;
+    }
+    // Exponential backoff: 2 s, 4 s, 8 s, 16 s, 32 s, 60 s
+    const delay = Math.min(60000, _PEER_BACKOFF_BASE * Math.pow(2, _peerReconnectAttempts));
+    _peerReconnectAttempts++;
+    meshLog(`PeerJS: reconnecting in ${(delay/1000).toFixed(0)} s (attempt ${_peerReconnectAttempts}/${_PEER_MAX_ATTEMPTS})`, "#f0c070");
+    _peerReconnectTimer = setTimeout(() => {
+      _peerReconnectTimer = null;
+      if (!_peer.destroyed) _peer.reconnect();
+    }, delay);
   });
 }
 
