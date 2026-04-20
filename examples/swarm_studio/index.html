@@ -2465,11 +2465,28 @@ function _setupPeerConn(conn) {
   conn.on("error", () => _remoteConns.delete(conn.peer));
 }
 
-function _peerConnectToSovereign() {
+// Derive a deterministic UUID v4 from a group code so both sovereign and followers
+// compute the same peer ID without any out-of-band transmission.
+// 0.peerjs.com validates custom peer IDs and rejects anything that isn't UUID v4 format.
+async function _groupCodeToUUID(groupCode) {
+  const data = new TextEncoder().encode("ruvon-swarm:" + groupCode.toLowerCase());
+  const hash = await crypto.subtle.digest("SHA-256", data);
+  const b = new Uint8Array(hash);
+  // Set UUID v4 version bits (bits 4-7 of byte 6 = 0100)
+  b[6] = (b[6] & 0x0f) | 0x40;
+  // Set RFC 4122 variant bits (bits 6-7 of byte 8 = 10)
+  b[8] = (b[8] & 0x3f) | 0x80;
+  const hex = [...b.slice(0, 16)].map(n => n.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20,32)}`;
+}
+
+let _sovereignPeerUUID = null; // cached UUID for this session's group
+
+async function _peerConnectToSovereign() {
   if (!_peer || _peer.destroyed || !_groupCode) return;
-  const sovereignPeerId = "ruvon-" + _groupCode;
-  if (_remoteConns.has(sovereignPeerId)) return; // already connected
-  const conn = _peer.connect(sovereignPeerId, { reliable: true });
+  if (!_sovereignPeerUUID) _sovereignPeerUUID = await _groupCodeToUUID(_groupCode);
+  if (_remoteConns.has(_sovereignPeerUUID)) return; // already connected
+  const conn = _peer.connect(_sovereignPeerUUID, { reliable: true });
   conn.on("open", () => _setupPeerConn(conn));
   conn.on("error", (err) => meshLog(`PeerJS: ${err.type}`, "#f07070"));
 }
@@ -2480,7 +2497,7 @@ let _peerReconnectTimer    = null;
 const _PEER_MAX_ATTEMPTS   = 6;   // give up cross-device after 6 failed attempts (~2 min)
 const _PEER_BACKOFF_BASE   = 2000; // 2 s, 4 s, 8 s, 16 s, 32 s, 60 s
 
-function initPeerJS(groupCode, isFounder) {
+async function initPeerJS(groupCode, isFounder) {
   _groupCode = groupCode;
   _isFounder = isFounder;
 
@@ -2493,13 +2510,16 @@ function initPeerJS(groupCode, isFounder) {
 
   if (_peer && !_peer.destroyed) { _peer.destroy(); }
 
-  const sovereignPeerId = "ruvon-" + groupCode;
-  // Sovereign claims the stable group peer ID; followers use a random ID.
-  _peer = isFounder ? new Peer(sovereignPeerId) : new Peer();
+  // Derive stable UUID from group code — identical result on every device
+  _sovereignPeerUUID = await _groupCodeToUUID(groupCode);
+
+  // Sovereign claims the stable UUID peer ID; followers use a random PeerJS-assigned ID.
+  _peer = isFounder ? new Peer(_sovereignPeerUUID) : new Peer();
 
   _peer.on("open", (id) => {
     _peerReconnectAttempts = 0;  // reset backoff on successful connect
-    meshLog(`PeerJS ↔ ${isFounder ? sovereignPeerId : id.slice(-14)}`, "#7ed9a0");
+    // Log short group code, not the full UUID
+    meshLog(`PeerJS ↔ group:${groupCode} ${isFounder ? "(sovereign)" : id.slice(-8)}`, "#7ed9a0");
     if (!isFounder) {
       // Small delay so sovereign finishes registering first
       setTimeout(() => _peerConnectToSovereign(), 300);
@@ -2513,10 +2533,15 @@ function initPeerJS(groupCode, isFounder) {
 
   _peer.on("error", (err) => {
     if (err.type === "unavailable-id") {
-      // Another process already holds this peer ID — try with a suffix
-      meshLog(`PeerJS: peer ID taken, using fallback`, "#f0c070");
-      _peer = new Peer(sovereignPeerId + "-b");
-      _peer.on("open", () => {});
+      // UUID collision extremely unlikely but handle gracefully:
+      // Alter variant byte to produce a sibling UUID and retry once.
+      meshLog(`PeerJS: peer ID taken, using fallback UUID`, "#f0c070");
+      const fallbackUUID = _sovereignPeerUUID.replace(/^(.{19})/, (m) => {
+        const hex = parseInt(m.slice(-2), 16);
+        return m.slice(0, -2) + ((hex ^ 0x01)).toString(16).padStart(2, "0");
+      });
+      _peer = new Peer(fallbackUUID);
+      _peer.on("open", () => meshLog(`PeerJS ↔ group:${groupCode} (fallback)`, "#7ed9a0"));
       _peer.on("connection", (conn) => { conn.on("open", () => _setupPeerConn(conn)); });
     } else {
       meshLog(`PeerJS: ${err.type}`, "#f07070");
