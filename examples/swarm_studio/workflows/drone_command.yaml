@@ -20,7 +20,7 @@ steps:
     automate_next: true
 
   - name: LogFormation
-    type: FIRE_AND_FORGET
+    type: STANDARD
     function: ruvon_swarm.steps.formation.log_formation
     automate_next: true
 
