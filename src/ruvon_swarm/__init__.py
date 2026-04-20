@@ -9,4 +9,4 @@ Provides:
 - Mulberry32 PRNG (bitwise-identical to JS implementation in formations.js / formations_3d.js)
 """
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"

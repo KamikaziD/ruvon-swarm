@@ -38,9 +38,9 @@ const _isLocal = location.hostname === "localhost" || location.hostname === "127
 const PYODIDE_INDEX_URL = _isLocal ? "/pyodide/" : "./pyodide-cache/";
 const PYODIDE_CDN = PYODIDE_INDEX_URL + "pyodide.js";
 // Wheels are served from the same origin (same-origin CORP is implicit).
-const RUVON_SDK_WHEEL   = "./ruvon_sdk-0.1.2-py3-none-any.whl";
-const RUVON_WHEEL       = "./ruvon_edge-0.1.2-py3-none-any.whl";
-const RUVON_SWARM_WHEEL = "./ruvon_swarm-0.1.0-py3-none-any.whl";
+const RUVON_SDK_WHEEL   = "./ruvon_sdk-0.1.3-py3-none-any.whl";
+const RUVON_WHEEL       = "./ruvon_edge-0.1.3-py3-none-any.whl";
+const RUVON_SWARM_WHEEL = "./ruvon_swarm-0.1.1-py3-none-any.whl";
 
 // Step names for progress reporting — matches SwarmFormation workflow YAML
 const STEP_NAMES = ["ParseCommand", "ValidateFormation", "BuildIntent", "LogFormation", "ExecuteFormation"];

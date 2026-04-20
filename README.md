@@ -5,8 +5,9 @@
 > Every browser tab IS a node. 64 ruvon-edge agents per tab. No cloud. No signaling server. Pure device mesh.
 
 [![Live Demo](https://img.shields.io/badge/Live%20Demo-GitHub%20Pages-00ff88?style=flat-square)](https://kamikazid.github.io/ruvon-swarm/examples/swarm_studio/)
-[![ruvon-swarm](https://img.shields.io/badge/ruvon--swarm-0.1.0-00ff88?style=flat-square)](https://pypi.org/project/ruvon-swarm/)
-[![ruvon-edge](https://img.shields.io/badge/ruvon--edge-0.1.2-00aaff?style=flat-square)](https://pypi.org/project/ruvon-edge/)
+[![ruvon-swarm](https://img.shields.io/badge/ruvon--swarm-0.1.1-00ff88?style=flat-square)](https://pypi.org/project/ruvon-swarm/)
+[![ruvon-edge](https://img.shields.io/badge/ruvon--edge-0.1.3-00aaff?style=flat-square)](https://pypi.org/project/ruvon-edge/)
+[![Documentation](https://img.shields.io/badge/docs-kamikazid.github.io-indigo?style=flat-square)](https://kamikazid.github.io/ruvon-docs/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue?style=flat-square)](LICENSE)
 
 ---
@@ -126,12 +127,12 @@ examples/swarm_studio/
   storage.js              ULID + IndexedDB (performances, telemetry, tweaks)
   trystero-torrent.js     Bundled trystero WebTorrent DHT (cross-device WebRTC)
   pyodide-cache/          Bundled Pyodide 0.26.4 runtime (served locally / cached)
-  ruvon_swarm-0.1.0-py3-none-any.whl   Local ruvon-swarm package wheel
-  ruvon_sdk-0.1.2-py3-none-any.whl     Local ruvon-sdk package wheel
-  ruvon_edge-0.1.2-py3-none-any.whl    Local ruvon-edge package wheel
+  ruvon_swarm-0.1.1-py3-none-any.whl   Local ruvon-swarm package wheel
+  ruvon_sdk-0.1.3-py3-none-any.whl     Local ruvon-sdk package wheel
+  ruvon_edge-0.1.3-py3-none-any.whl    Local ruvon-edge package wheel
 
 src/ruvon_swarm/
-  __init__.py             Package version (0.1.0)
+  __init__.py             Package version (0.1.1)
   state_models.py         SwarmFormationState, SwarmHealthState Pydantic models
   steps/
     formation.py          parse_command, validate_formation, build_intent, execute_formation
@@ -147,8 +148,8 @@ src/ruvon_swarm/
 | Layer | Technology |
 |-------|-----------|
 | Python runtime | [Pyodide](https://pyodide.org) 0.26.4 (CPython → WASM) |
-| Workflow engine | [ruvon-edge](https://pypi.org/project/ruvon-edge/) 0.1.2 |
-| Swarm package | [ruvon-swarm](https://pypi.org/project/ruvon-swarm/) 0.1.0 |
+| Workflow engine | [ruvon-edge](https://pypi.org/project/ruvon-edge/) 0.1.3 |
+| Swarm package | [ruvon-swarm](https://pypi.org/project/ruvon-swarm/) 0.1.1 |
 | Physics | Web Workers + SharedArrayBuffer (Reynolds flocking, PID) |
 | Rendering | WebGPU — instanced meshes, compute shaders |
 | Mesh (same-device) | BroadcastChannel |
