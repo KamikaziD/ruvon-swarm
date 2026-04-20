@@ -612,7 +612,7 @@ export async function initRenderer(device, canvas, maxDrones = 64) {
   let _ghostCount = 0;
 
   // ── Trail state (ring buffer of last-N positions per drone) ──────────────
-  const TRAIL_LEN = 10;
+  const TRAIL_LEN = 40;  // ~670ms at 60fps — visible during formation transitions
   const trails = Array.from({ length: maxDrones }, () =>
     Array.from({ length: TRAIL_LEN }, () => ({ x: 0, y: 0, z: 0 }))
   );
@@ -792,6 +792,12 @@ export async function initRenderer(device, canvas, maxDrones = 64) {
     getLocalPositions() { return droneWorldPos; },
 
     getLocalCount() { return _droneCount; },
+
+    /**
+     * Returns trail ring-buffer data for vapor trail rendering on the overlay canvas.
+     * @returns {{ trails: Array<Array<{x,y,z}>>, heads: Uint8Array, len: number }}
+     */
+    getTrails() { return { trails, heads: trailHeads, len: TRAIL_LEN }; },
 
     /**
      * Project a world position to canvas pixel coords using the last frame's camera.

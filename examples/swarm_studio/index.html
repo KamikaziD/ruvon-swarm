@@ -2212,6 +2212,54 @@ function _podIdToColorCSS(podId) {
 const BEAM_MAX_DIST    = 220; // world units — segments longer than this are not drawn
 const BEAM_MAX_DIST_SQ = BEAM_MAX_DIST * BEAM_MAX_DIST;
 
+// ── Vapor trails ───────────────────────────────────────────────────────────────
+
+function _drawVaporTrails(ctx, W, H) {
+  if (!renderer || !swarmLaunched) return;
+  const { trails, heads, len } = renderer.getTrails();
+  const count = renderer.getLocalCount();
+  const color = _mySquadColor();
+
+  ctx.save();
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+
+  for (let i = 0; i < count; i++) {
+    const trail = trails[i];
+    const head  = heads[i];
+    // Walk ring buffer from oldest → newest (oldest = head, newest = head-1)
+    // Collect projected screen points in order newest-first for opacity gradient
+    let pts = [];
+    for (let age = 0; age < len; age++) {
+      const idx = (head - 1 - age + len) % len;
+      const p = trail[idx];
+      if (!p || (p.x === 0 && p.y === 0 && p.z === 0)) continue;
+      const [sx, sy, behind] = renderer.project(p.x, p.y, p.z, W, H);
+      if (behind) continue;
+      pts.push({ sx, sy, age });
+    }
+    if (pts.length < 2) continue;
+
+    // Draw segments oldest→newest, fading from transparent to barely-visible
+    for (let k = pts.length - 1; k > 0; k--) {
+      const a = pts[k];   // older
+      const b = pts[k-1]; // newer
+      // age=0 is newest (tip), len-1 is oldest (tail)
+      // alpha: tip ~0.35, tail ~0
+      const alpha = (1 - a.age / len) * 0.35;
+      const width = (1 - a.age / len) * 1.4 + 0.3;
+      ctx.beginPath();
+      ctx.moveTo(a.sx, a.sy);
+      ctx.lineTo(b.sx, b.sy);
+      ctx.strokeStyle = color;
+      ctx.globalAlpha = alpha;
+      ctx.lineWidth   = width;
+      ctx.stroke();
+    }
+  }
+  ctx.restore();
+}
+
 function _drawFormationBeams(ctx, W, H) {
   if (!renderer || !swarmLaunched) return;
 
@@ -2275,7 +2323,10 @@ function updateOverlay() {
 
   const now = performance.now();
 
-  // ── 0. Formation skeleton beams ───────────────────────────────────────────
+  // ── 0a. Vapor trails ─────────────────────────────────────────────────────
+  _drawVaporTrails(ctx, canvasW, canvasH);
+
+  // ── 0b. Formation skeleton beams ─────────────────────────────────────────
   _drawFormationBeams(ctx, canvasW, canvasH);
 
   // ── 1. Formation name fade (2 s fade-in, 2 s hold, 2 s fade-out; total 6 s) ──
