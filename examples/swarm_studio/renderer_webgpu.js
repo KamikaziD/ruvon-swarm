@@ -619,8 +619,9 @@ export async function initRenderer(device, canvas, maxDrones = 64) {
   const trailHeads = new Uint8Array(maxDrones);
 
   let _droneCount = maxDrones;
+  let _lastCam    = null;   // cached each update() for beam projection
 
-  // ── Drone position cache (for pick) ──────────────────────────────────────
+  // ── Drone position cache (for pick and beam projection) ──────────────────
   const droneWorldPos = new Float32Array(maxDrones * 3);
 
   // ── Render handle ─────────────────────────────────────────────────────────
@@ -636,6 +637,7 @@ export async function initRenderer(device, canvas, maxDrones = 64) {
      */
     update(sab, camObj, t, localCount = maxDrones, remoteSquads = null) {
       if (canvas.width <= 0 || canvas.height <= 0) return;   // skip frame: invalid canvas dimensions
+      _lastCam = camObj;
       const src = new Float32Array(sab);
 
       // Pack local drones (slot 0) from SAB
@@ -780,6 +782,31 @@ export async function initRenderer(device, canvas, maxDrones = 64) {
         if (d2 < bestDist2) { bestDist2 = d2; bestIdx = i; }
       }
       return bestIdx;
+    },
+
+    /**
+     * Returns the local drone world positions packed as [x,y,z, x,y,z, …].
+     * GPU Y-up convention: SAB.X→x, SAB.Z(alt)→y, SAB.Y(gnd)→z.
+     * Safe to read immediately after update(); Float32Array is updated in-place.
+     */
+    getLocalPositions() { return droneWorldPos; },
+
+    getLocalCount() { return _droneCount; },
+
+    /**
+     * Project a world position to canvas pixel coords using the last frame's camera.
+     * Returns [screenX, screenY, behind] where behind=true means point is off-screen.
+     */
+    project(wx, wy, wz, W, H) {
+      if (!_lastCam) return [0, 0, true];
+      const vp = _multiplyMat4(_lastCam.getProjMatrix(W, H), _lastCam.getViewMatrix());
+      const x  = vp[0]*wx + vp[4]*wy + vp[8]*wz  + vp[12];
+      const y  = vp[1]*wx + vp[5]*wy + vp[9]*wz  + vp[13];
+      const w  = vp[3]*wx + vp[7]*wy + vp[11]*wz + vp[15];
+      if (w <= 0) return [0, 0, true];
+      const sx = ((x / w) + 1) * 0.5 * W;
+      const sy = (1 - (y / w)) * 0.5 * H;
+      return [sx, sy, false];
     },
 
     destroy() {

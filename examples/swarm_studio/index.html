@@ -2199,6 +2199,56 @@ function _podIdToColorCSS(podId) {
   return SQUAD_COLORS_CSS[Math.abs(h) % SQUAD_COLORS_CSS.length];
 }
 
+// Draw formation-skeleton beams on the 2D overlay canvas.
+// Connects consecutive drones (i → i+1) with thin glowing lines — traces the
+// mathematical skeleton of the formation (Fibonacci spiral for sphere,
+// double strand for helix, concentric rings for torus, etc.).
+function _drawFormationBeams(ctx, W, H) {
+  if (!renderer || !swarmLaunched) return;
+
+  const drawBeamPath = (positions, count, color, coordMode) => {
+    // coordMode "sab": positions is Float32Array [x,y,z ...] in GPU-Y-up world coords
+    // coordMode "obj": positions is Array of {x,y,z} objects in SAB coords (x=gnd-x, y=gnd-y, z=alt)
+    ctx.save();
+    ctx.lineWidth   = 1.1;
+    ctx.lineCap     = "round";
+    ctx.strokeStyle = color;
+    ctx.globalAlpha = 0.22;
+    ctx.shadowColor = color;
+    ctx.shadowBlur  = 5;
+    ctx.beginPath();
+
+    let penDown = false;
+    for (let i = 0; i < count; i++) {
+      let wx, wy, wz;
+      if (coordMode === "sab") {
+        wx = positions[i*3+0];
+        wy = positions[i*3+1];
+        wz = positions[i*3+2];
+      } else {
+        const d = positions[i];
+        wx = d.x; wy = d.z; wz = d.y; // SAB Z=alt→GPU Y, SAB Y=gnd→GPU Z
+      }
+      const [sx, sy, behind] = renderer.project(wx, wy, wz, W, H);
+      if (behind) { penDown = false; continue; }
+      if (!penDown) { ctx.moveTo(sx, sy); penDown = true; }
+      else          { ctx.lineTo(sx, sy); }
+    }
+    ctx.stroke();
+    ctx.restore();
+  };
+
+  // Local squad beams
+  const localPos   = renderer.getLocalPositions();
+  const localCount = renderer.getLocalCount();
+  drawBeamPath(localPos, localCount, _mySquadColor(), "sab");
+
+  // Remote squad beams (ghost positions)
+  for (const [podId, drones] of remoteDroneSquads) {
+    drawBeamPath(drones, drones.length, _podIdToColorCSS(podId), "obj");
+  }
+}
+
 function updateOverlay() {
   const cvs = document.getElementById("overlay-canvas");
   if (!cvs) return;
@@ -2206,6 +2256,9 @@ function updateOverlay() {
   ctx.clearRect(0, 0, canvasW, canvasH);
 
   const now = performance.now();
+
+  // ── 0. Formation skeleton beams ───────────────────────────────────────────
+  _drawFormationBeams(ctx, canvasW, canvasH);
 
   // ── 1. Formation name fade (2 s fade-in, 2 s hold, 2 s fade-out; total 6 s) ──
   if (_hudFormationName) {
