@@ -178,6 +178,7 @@
     <span class="tag">Pyodide</span>
     <span class="tag">ruvon-edge</span>
     <span class="tag">BroadcastChannel mesh</span>
+    <span class="tag">PeerJS cross-device</span>
     <span class="tag">Zero servers</span>
   </div>
 </header>
@@ -205,13 +206,14 @@
 │  <span class="hi2">physics_worker.js × 4 (SAB)</span>     │            │  <span class="hi2">physics_worker.js × 4 (SAB)</span>      │
 │  Reynolds flocking + PID alt    │            │  Reynolds flocking + PID alt     │
 │  Shared memory (SharedArrayBuf) │            │  Shared memory (SharedArrayBuf)  │
+│  ↳ fallback: inline rAF loop   │            │  ↳ fallback: inline rAF loop    │
 ├─────────────────────────────────┤            ├──────────────────────────────────┤
 │  <span class="hi">renderer_webgpu.js</span>              │            │  <span class="hi">renderer_webgpu.js</span>               │
 │  Instanced drone mesh           │            │  Instanced drone mesh            │
 │  LED glow + trails              │            │  Ghost dots for remote squads    │
 └─────────────────────────────────┘            └──────────────────────────────────┘
-              │ BroadcastChannel (same-device) · PeerJS (cross-device, planned)
-              └──────────────────────────────────────────────────────────────────►</div>
+              │ BroadcastChannel (same-device) · PeerJS/WebRTC (cross-device, active)
+              └──────────────────────────────────────────────────────────────────────►</div>
   </section>
 
   <section>
@@ -238,13 +240,13 @@
       </div>
       <div class="card">
         <div class="icon">🌐</div>
-        <h4>BroadcastChannel mesh</h4>
-        <p>Tabs gossip via the Web BroadcastChannel API. A scored capability-vector election picks the sovereign. FOUNDING_BIAS ensures the original tab wins ties; stable pod_id tiebreaker prevents split-brain.</p>
+        <h4>BroadcastChannel + PeerJS mesh</h4>
+        <p>Tabs on the same device gossip via BroadcastChannel. Tabs on different devices connect via PeerJS/WebRTC — no signaling server needed beyond the free PeerJS cloud. A scored capability-vector election picks the sovereign; FOUNDING_BIAS + stable pod_id prevent split-brain.</p>
       </div>
       <div class="card">
         <div class="icon">⚡</div>
         <h4>SharedArrayBuffer physics</h4>
-        <p>Four Web Workers share a SAB (64 drones × 16 f32 = 4 KB). Reynolds flocking + PID altitude run in parallel worker threads with zero serialization overhead.</p>
+        <p>Four Web Workers share a SAB (64 drones × 16 f32 = 4 KB). Reynolds flocking + PID altitude run in parallel threads with zero serialization overhead. When SAB is unavailable (non-isolated context), physics falls back to an inline requestAnimationFrame loop on the main thread.</p>
       </div>
       <div class="card">
         <div class="icon">🎮</div>
@@ -255,6 +257,11 @@
         <div class="icon">🔢</div>
         <h4>Deterministic sync</h4>
         <p>Formation changes broadcast a seed + preset name (not coordinates). Each tab independently computes its own index slice using mulberry32 PRNG — bitwise-identical in JS and Python.</p>
+      </div>
+      <div class="card">
+        <div class="icon">📦</div>
+        <h4>Instant Pyodide warm-up</h4>
+        <p>The full Pyodide runtime (~35 MB) is bundled as same-origin static assets in <code>pyodide-cache/</code>. A cache-first service worker stores everything on first load — subsequent page refreshes skip the network entirely and boot in under 2 s.</p>
       </div>
       <div class="card">
         <div class="icon">🌿</div>
@@ -286,29 +293,31 @@
 
   <section>
     <h2>ruvon-swarm package</h2>
-    <p>The Python workflow logic is packaged as <a href="https://pypi.org/project/ruvon-swarm/" target="_blank"><code>ruvon-swarm</code></a> and installed inside Pyodide at runtime via micropip. It provides:</p>
+    <p>The Python workflow logic is packaged as <code>ruvon-swarm</code> — a local wheel bundled with the demo and installed inside Pyodide at startup via micropip. It provides:</p>
     <ul>
       <li><strong>SwarmFormationState</strong> — Pydantic state model for formation commands</li>
       <li><strong>DroneCommand workflow</strong> — 5-step YAML: ParseCommand → ValidateFormation → BuildIntent → LogFormation → ExecuteFormation</li>
-      <li><strong>build_intent step</strong> — returns a deterministic seed derived from the workflow ULID, which JS uses to compute formation slices</li>
+      <li><strong>build_intent step</strong> — returns a deterministic seed derived from the workflow ULID, which JS uses to compute formation slices without broadcasting coordinates</li>
       <li><strong>mulberry32 PRNG</strong> — bitwise-identical implementation in both JS and Python so formation math can be validated server-side</li>
     </ul>
-    <pre style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:1rem;font-size:.82rem;overflow-x:auto;margin-top:.8rem;color:var(--dim)">pip install ruvon-swarm</pre>
+    <pre style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:1rem;font-size:.82rem;overflow-x:auto;margin-top:.8rem;color:var(--dim)"># The wheel is served alongside the demo — no PyPI installation needed
+# pyodide_worker.js installs it automatically at startup:
+await micropip.install("./ruvon_swarm-0.1.0-py3-none-any.whl")</pre>
   </section>
 
   <section>
     <h2>Run locally</h2>
     <pre style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:1rem;font-size:.82rem;overflow-x:auto;color:var(--dim)">git clone https://github.com/KamikaziD/ruvon-swarm
 cd ruvon-swarm/examples/swarm_studio
-python serve.py          # serves on http://localhost:8081
+python serve.py          # serves on http://localhost:8080
 </pre>
-    <p style="margin-top:.6rem;font-size:.88rem;color:var(--dim)">The local server proxies the Pyodide CDN through localhost and adds the COOP/COEP headers required for SharedArrayBuffer. No installation needed beyond Python 3.9+.</p>
+    <p style="margin-top:.6rem;font-size:.88rem;color:var(--dim)">The local server adds the COOP/COEP/CORP headers required for SharedArrayBuffer. The full Pyodide runtime is bundled in <code>pyodide-cache/</code> and served locally — no CDN download needed. No installation beyond Python 3.9+.</p>
+    <p style="margin-top:.4rem;font-size:.88rem;color:var(--dim)">For cross-device testing: open <code>http://&lt;your-lan-ip&gt;:8080</code> on two devices. PeerJS will connect them directly via WebRTC.</p>
 
     <div class="cta">
       <a href="index.html" class="btn btn-primary">Launch Demo</a>
       <a href="https://github.com/KamikaziD/ruvon-swarm" class="btn btn-secondary" target="_blank">GitHub</a>
       <a href="https://kamazid.github.io/ruvon-docs/" class="btn btn-secondary" target="_blank">Documentation</a>
-      <a href="https://pypi.org/project/ruvon-swarm/" class="btn btn-secondary" target="_blank">PyPI</a>
     </div>
   </section>
 

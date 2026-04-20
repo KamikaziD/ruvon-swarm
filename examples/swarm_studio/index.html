@@ -763,7 +763,9 @@ async function init() {
   meshBrain = new Worker(new URL("./mesh_brain.js", import.meta.url), { type: "module" });
   meshBrain.onmessage = handleMeshMsg;
   const groupCode = generateGroupCode();
-  const isFounder = !new URLSearchParams(location.search).has("group");
+  const _params   = new URLSearchParams(location.search);
+  // Founder = (a) no ?group param (fresh tab) OR (b) ?group was set by joinCustomGroup (&founder=1)
+  const isFounder = !_params.has("group") || _params.get("founder") === "1";
   meshBrain.postMessage({ type: "INIT", groupCode, is_founder: isFounder, peerJsConfig: {} });
 
   // ── PeerJS cross-device mesh ─────────────────────────────────────────────
@@ -2519,10 +2521,13 @@ window.copySovLink = function() {
 window.joinCustomGroup = function() {
   const raw = document.getElementById("group-name-input").value.trim().toUpperCase();
   if (!raw) return;
-  // Redirect to ?group=NAME — reinitializes the entire mesh with that group key.
-  // Bookmarking this URL always returns to the same private fog network.
+  // Redirect to ?group=NAME&founder=1 — marks this tab as the sovereign founder of
+  // the custom group. Tabs joining via the sovereign link only get ?group=NAME (no founder
+  // flag) and boot as followers. Without &founder=1, the creator would also boot as a
+  // follower and immediately race into a split-brain with any other tab.
   const url = new URL(location.href);
   url.searchParams.set("group", raw);
+  url.searchParams.set("founder", "1");
   location.href = url.toString();
 };
 

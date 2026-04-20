@@ -34,6 +34,11 @@ let isReady = false;        // visitor tabs: true only after first peer heartbea
 const FOUNDING_BIAS = 0.40;  // score bonus for the founding browser
 const HYSTERESIS    = 0.30;  // challenger must exceed sovereign by this much to unseat
 
+// Known-sovereign tracking — prevents follower tabs from challenging a live sovereign
+// on every heartbeat (the main cause of post-election flopping).
+let _knownSovereignId  = null;   // pod_id of the sovereign we last saw/confirmed
+let _sovereignLastSeen = 0;      // ms timestamp — refreshed on every sovereign heartbeat/election
+
 // ---------------------------------------------------------------------------
 // Message dedup — LRU
 // ---------------------------------------------------------------------------
@@ -223,6 +228,14 @@ function processIncomingMsg(msg) {
       peers[msg.pod_id] = msg.vec;
       peerSources[msg.pod_id] = peerSources[msg.pod_id] || "local";
       _currentBackoffMs = BASE_INTERVAL_MS;
+
+      // If the sender is flagged as sovereign, refresh our known-sovereign timestamp.
+      // This is the primary anti-flop mechanism: followers won't challenge a live sovereign.
+      if (msg.is_sovereign) {
+        _knownSovereignId  = msg.pod_id;
+        _sovereignLastSeen = Date.now();
+      }
+
       if (!isReady) {
         // First peer seen — visitor tab is now ready to participate in elections
         isReady = true;
@@ -241,12 +254,29 @@ function processIncomingMsg(msg) {
       delete peerSources[leavingId];
       if (isSovereign) _reEnqueueTasksFor(leavingId);
       notifyPeerUpdate();
-      maybeUpdateElection();
+
+      if (leavingId === _knownSovereignId) {
+        // Sovereign departed — clear known-sovereign so a fresh election can occur.
+        // Stagger the election with a small random delay so that all tabs don't self-elect
+        // simultaneously. The first tab to run its election broadcasts ELECTION; remaining
+        // tabs receive that broadcast, set _knownSovereignId, and skip their own election.
+        // Without the jitter, all tabs fire at exactly the same moment (same GOODBYE task)
+        // causing a near-certain split-brain that takes 1-2 extra rounds to resolve.
+        _knownSovereignId = null;
+        setTimeout(maybeUpdateElection, 80 + Math.random() * 250);
+      } else {
+        maybeUpdateElection();
+      }
       break;
     }
 
     case "ELECTION": {
       if (msg.pod_id === POD_ID) break; // own echo — ignore
+
+      // Track the announced sovereign regardless of our own role
+      _knownSovereignId  = msg.sovereign_pod_id;
+      _sovereignLastSeen = Date.now();
+
       if (isSovereign && msg.sovereign_pod_id !== POD_ID) {
         // Split-brain: another pod also claims sovereignty.
         // Re-run election without hysteresis — stable sort guarantees both pods
@@ -260,10 +290,10 @@ function processIncomingMsg(msg) {
         // else: we outrank them — stay sovereign, let them receive our next heartbeat and re-elect
       } else if (!isSovereign) {
         // Normal case: peer announced a sovereign; update our local view.
-        const wasMe = false; // we weren't sovereign
-        const isMe  = msg.sovereign_pod_id === POD_ID;
+        const isMe = msg.sovereign_pod_id === POD_ID;
         if (isMe) {
           isSovereign = true;
+          _knownSovereignId = POD_ID;
           self.postMessage({ type: "ELECTION", sovereign_pod_id: msg.sovereign_pod_id, is_me: true });
         }
       }
@@ -533,13 +563,37 @@ function maybeUpdateElection() {
   // Visitor tabs are born not-ready; isReady flips on first ANNOUNCE/HEARTBEAT.
   // This eliminates flapping during the Pyodide boot window.
   if (!isReady) return;
+
+  // Anti-flop guard: if we're a follower and we know who the sovereign is,
+  // only challenge if their heartbeats have gone stale (> STALE_MS without a beacon).
+  // Without this, every heartbeat triggers a fresh score comparison and tabs
+  // with randomly higher cpu_load scores keep trying to unseat the incumbent.
+  if (!isSovereign && _knownSovereignId && _knownSovereignId !== POD_ID) {
+    const sovereignIsStale = Date.now() - _sovereignLastSeen > STALE_MS;
+    if (!sovereignIsStale) return;  // sovereign is alive — don't challenge
+    // Sovereign went stale — clear tracking and fall through to a fresh election
+    _knownSovereignId = null;
+  }
+
   const leader = electLeader();
   const becameSovereign = leader === POD_ID && !isSovereign;
   const lostSovereignty = leader !== POD_ID && isSovereign;
   if (becameSovereign || lostSovereignty) {
     isSovereign = (leader === POD_ID);
-    broadcastAll({ type: "ELECTION", sovereign_pod_id: leader });
+    if (isSovereign) {
+      _knownSovereignId  = POD_ID;
+      _sovereignLastSeen = Date.now();
+    }
+    broadcastAll({ type: "ELECTION", sovereign_pod_id: leader, pod_id: POD_ID, timestamp: Date.now() });
     self.postMessage({ type: "ELECTION", sovereign_pod_id: leader, is_me: isSovereign });
+
+    if (isSovereign) {
+      // Immediately push a sovereign heartbeat so all followers set _knownSovereignId
+      // right away — without this, challengers have up to 2 s to self-elect before
+      // the next scheduled heartbeat carries is_sovereign:true.
+      const vec = buildCapabilityVector();
+      broadcastAll({ type: "HEARTBEAT", pod_id: POD_ID, vec, is_sovereign: true, propagated_count: 0 });
+    }
   }
 }
 
@@ -622,7 +676,7 @@ function fireHeartbeat() {
   const currentScore = score(vec);
   const currentQueue = _taskQueue.length;
 
-  broadcastAll({ type: "HEARTBEAT", pod_id: POD_ID, vec, propagated_count: 0 });
+  broadcastAll({ type: "HEARTBEAT", pod_id: POD_ID, vec, is_sovereign: isSovereign, propagated_count: 0 });
   pruneStale();
   maybeUpdateElection();
   notifyPeerUpdate();
@@ -663,9 +717,14 @@ self.onmessage = (evt) => {
       };
 
       if (groupFounder) {
-        // Founding tab: immediately ready to participate in elections
+        // Founding tab: immediately sovereign; mark ourselves as the known sovereign
+        // so we don't wait for a peer to confirm before accepting the role.
         isReady = true;
+        isSovereign = true;
+        _knownSovereignId  = POD_ID;
+        _sovereignLastSeen = Date.now();
         startAdaptiveGossip();
+        self.postMessage({ type: "ELECTION", sovereign_pod_id: POD_ID, is_me: true });
       } else {
         // Visitor tab: NOT ready yet. isReady flips to true upon receiving the first
         // peer heartbeat/announce. Until then, maybeUpdateElection() is a no-op.
