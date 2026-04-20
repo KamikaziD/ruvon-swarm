@@ -1988,7 +1988,7 @@ window.onOllamaToggle = function(checked) {
     // Works only when using the local dev server (serve.py on http://localhost).
     if (location.protocol === "https:") {
       document.getElementById("intent-status").textContent =
-        "⚠ Ollama requires local server — run serve.py and open http://localhost:8080";
+        "⚠ Ollama blocked by HTTPS — options: (1) run serve.py → open http://localhost:8080  (2) Cloudflare Tunnel: OLLAMA_ORIGINS=https://kamikazid.github.io ollama serve  then  cloudflared tunnel --url http://localhost:11434  and paste the https:// URL below";
       _ollamaLive = false;
     } else {
       document.getElementById("intent-status").textContent = "";
