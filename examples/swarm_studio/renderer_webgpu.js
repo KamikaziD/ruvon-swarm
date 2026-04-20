@@ -657,9 +657,11 @@ export async function initRenderer(device, canvas, maxDrones = 64) {
       // Pack remote squads as Ghost SAF Dots (additive billboard sprites, not full meshes)
       _ghostCount = 0;
       if (remoteSquads?.size) {
-        let squadSlot = 1;
-        for (const [, drones] of remoteSquads) {
-          const rgb = GHOST_COLORS[squadSlot % GHOST_COLORS.length];
+        for (const [podId, drones] of remoteSquads) {
+          // Stable color from pod_id hash — same result across refresh/rejoin
+          let h = 0;
+          for (let ci = 0; ci < podId.length; ci++) h = (Math.imul(31, h) + podId.charCodeAt(ci)) | 0;
+          const rgb = GHOST_COLORS[Math.abs(h) % GHOST_COLORS.length];
           for (let i = 0; i < drones.length && _ghostCount < MAX_GHOSTS; i++) {
             const d   = drones[i];
             const gi  = _ghostCount * GHOST_STRIDE;
@@ -674,7 +676,6 @@ export async function initRenderer(device, canvas, maxDrones = 64) {
             ghostCPU[gi + 7] = 0; // pad
             _ghostCount++;
           }
-          squadSlot++;
         }
         if (_ghostCount > 0) {
           // writeBuffer expects bytes; ghostCPU is Float32Array so multiply by 4
