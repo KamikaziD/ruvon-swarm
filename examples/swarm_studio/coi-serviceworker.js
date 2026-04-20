@@ -23,7 +23,7 @@
   if (typeof window === "undefined") {
     // ── Service Worker context ─────────────────────────────────────────────────
 
-    const CACHE_NAME = "ruvon-swarm-v1";
+    const CACHE_NAME = "ruvon-swarm-v2";
 
     // Helper: inject isolation headers onto a Response
     function withIsolationHeaders(r) {
