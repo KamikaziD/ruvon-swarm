@@ -487,6 +487,7 @@ export async function initRenderer(device, canvas, maxDrones = 64) {
   // ── Depth texture ─────────────────────────────────────────────────────────
   let depthTex = null;
   function makeDepth(w, h) {
+    if (w <= 0 || h <= 0) return;   // guard: WebGPU requires size > 0 in every dimension
     depthTex?.destroy();
     depthTex = device.createTexture({
       size: [w, h], format: "depth24plus",
@@ -634,6 +635,7 @@ export async function initRenderer(device, canvas, maxDrones = 64) {
      * @param {Map<string,Array>} remoteSquads — podId → [{x,y,z,status,tier,battery,...}]
      */
     update(sab, camObj, t, localCount = maxDrones, remoteSquads = null) {
+      if (canvas.width <= 0 || canvas.height <= 0) return;   // skip frame: invalid canvas dimensions
       const src = new Float32Array(sab);
 
       // Pack local drones (slot 0) from SAB

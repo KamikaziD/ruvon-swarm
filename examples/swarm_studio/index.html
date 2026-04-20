@@ -917,6 +917,7 @@ function _inlineStepVert(i) {
 }
 
 function _inlineStepFrame(preset) {
+  if (!f32View) return;   // guard: SAB not yet initialised
   const allDrones = _inlineReadAll();
   for (let i=0; i<DRONE_COUNT; i++) {
     const st=f32View[i*SAB_FLOATS+IX.STATUS];
