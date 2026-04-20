@@ -444,8 +444,8 @@ details > summary::-webkit-details-marker { display: none; }
 
 <div id="toast"></div>
 
-<!-- trystero — serverless WebRTC via Nostr relay network (no signaling server needed) -->
-<!-- loaded dynamically in initTrystero() via esm.sh CDN -->
+<!-- trystero — serverless WebRTC via BitTorrent DHT/WebTorrent trackers (no signaling server needed) -->
+<!-- bundled locally as trystero-torrent.js, served same-origin -->
 
 <!-- ══ SCRIPT ════════════════════════════════════════════════════════════════ -->
 <script type="module">
@@ -2426,12 +2426,9 @@ function generateGroupCode() {
 }
 
 // ── Trystero cross-device mesh ────────────────────────────────────────────────
-// Trystero uses the Nostr relay network for WebRTC peer discovery — no central
-// signaling server needed. All tabs in the same group join the same "room" and
-// get direct P2P DataChannel connections to each other automatically.
-//
-// Why Nostr strategy: works in browser, free public relays, no rate-limiting,
-// survives GitHub Pages origin restrictions that blocked 0.peerjs.com.
+// Trystero uses BitTorrent DHT / WebTorrent trackers for WebRTC peer discovery —
+// no central signaling server, no whitelist, no rate-limiting.
+// Trackers used: tracker.webtorrent.dev, tracker.openwebtorrent.com (always open).
 
 async function initTrystero(groupCode) {
   _groupCode = groupCode;
@@ -2443,12 +2440,12 @@ async function initTrystero(groupCode) {
     _trysteroBroadcast = null;
   }
 
-  meshLog(`Mesh ↔ joining room "${groupCode}" via Nostr…`, "#b0c0f0");
+  meshLog(`Mesh ↔ joining room "${groupCode}" via WebTorrent DHT…`, "#b0c0f0");
 
   let joinRoom;
   try {
     // Local bundle — served same-origin, no CDN dependency, cached by service worker
-    ({ joinRoom } = await import(new URL("./trystero-nostr.js", import.meta.url).href));
+    ({ joinRoom } = await import(new URL("./trystero-torrent.js", import.meta.url).href));
   } catch (err) {
     meshLog(`Trystero load failed: ${err.message} — cross-device unavailable`, "#f07070");
     return;
