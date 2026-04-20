@@ -506,9 +506,13 @@ const WLLAMA_PATHS = {
   "multi-thread/wllama.wasm":  WLLAMA_BASE + "multi-thread/wllama.wasm",
 };
 const MODEL_CONFIGS = {
-  "SmolLM2-135M":   { repo:"bartowski/SmolLM2-135M-Instruct-GGUF",   file:"SmolLM2-135M-Instruct-Q4_K_M.gguf",   ramMb:88   },
-  "Qwen2.5-0.5B":   { repo:"bartowski/Qwen2.5-0.5B-Instruct-GGUF",   file:"Qwen2.5-0.5B-Instruct-Q4_K_M.gguf",   ramMb:395  },
-  "Nemotron-Mini-4B":{ repo:"bartowski/Nemotron-Mini-4B-Instruct-GGUF",file:"Nemotron-Mini-4B-Instruct-Q4_K_M.gguf",ramMb:2700 },
+  // n_ctx: KV cache per sequence. Our max need: ~600 tokens (system+user+reply).
+  // SmolLM2 training ctx = 2048 → n_ctx=2048 exact match, no warning.
+  // Qwen2.5 training ctx = 32768 → n_ctx<32768 always warns; 4096 is a good browser budget.
+  // Nemotron training ctx = 4096 → n_ctx=4096 exact match.
+  "SmolLM2-135M":    { repo:"bartowski/SmolLM2-135M-Instruct-GGUF",    file:"SmolLM2-135M-Instruct-Q4_K_M.gguf",    ramMb:88,   n_ctx:2048 },
+  "Qwen2.5-0.5B":    { repo:"bartowski/Qwen2.5-0.5B-Instruct-GGUF",    file:"Qwen2.5-0.5B-Instruct-Q4_K_M.gguf",    ramMb:395,  n_ctx:4096 },
+  "Nemotron-Mini-4B":{ repo:"bartowski/Nemotron-Mini-4B-Instruct-GGUF", file:"Nemotron-Mini-4B-Instruct-Q4_K_M.gguf", ramMb:2700, n_ctx:4096 },
 };
 
 const SYSTEM_PROMPT =
@@ -566,9 +570,7 @@ Q: rose curve with 5 petals
 A: {"action":"formation_spec","name":"rose5","t_min":0,"t_max":6.2832,"fn_x":"0.5+0.4*cos(5*t)*cos(t)","fn_y":"0.5+0.4*cos(5*t)*sin(t)","fn_z":"0.5+0.15*sin(10*t)"}
 
 Q: galaxy spiral
-A: {"action":"formation_spec","name":"galaxy","t_min":0,"t_max":18.8496,"fn_x":"0.5+(0.04+0.4*(t/(18.8496)))*cos(t)","fn_y":"0.5+(0.04+0.4*(t/(18.8496)))*sin(t)","fn_z":"0.5+0.1*sin(t*0.5)"}
-
-Q:`;
+A: {"action":"formation_spec","name":"galaxy","t_min":0,"t_max":18.8496,"fn_x":"0.5+(0.04+0.4*(t/(18.8496)))*cos(t)","fn_y":"0.5+(0.04+0.4*(t/(18.8496)))*sin(t)","fn_z":"0.5+0.1*sin(t*0.5)"}`;
 
 // ── State ──────────────────────────────────────────────────────────────────────
 let sab           = null;
@@ -1998,9 +2000,10 @@ async function ensureWllama(modelKey) {
   if (_wllama) { try { await _wllama.exit(); } catch {} _wllama = null; }
   const cfg = MODEL_CONFIGS[modelKey] ?? MODEL_CONFIGS["SmolLM2-135M"];
   document.getElementById("model-status").textContent = `⬇ Loading ${modelKey}…`;
-  _wllama = new _wllamaClass(WLLAMA_PATHS, { logger:{ debug:()=>{}, log:()=>{}, warn:console.warn, error:console.error }});
+  // Suppress llama.cpp internal warnings (munmap false-positive, n_ctx_seq < n_ctx_train cosmetic).
+  _wllama = new _wllamaClass(WLLAMA_PATHS, { logger:{ debug:()=>{}, log:()=>{}, warn:()=>{}, error:console.error }});
   await _wllama.loadModelFromHF(cfg.repo, cfg.file, {
-    n_ctx: 2048,
+    n_ctx: cfg.n_ctx ?? 2048,
     progressCallback: ({ loaded, total }) => {
       if (total > 0)
         document.getElementById("model-status").textContent = `⬇ ${modelKey} ${Math.round(loaded/total*100)}%`;
