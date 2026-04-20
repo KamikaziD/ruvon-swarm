@@ -2282,71 +2282,9 @@ function updateOverlay() {
     ctx.restore();
   }
 
-  // ── 2c. Full-canvas mesh network lines (gossip pulse) ─────────────────────
-  // Each connected node gets a stable canvas position; thin glowing lines
-  // connect them, brightness keyed to how recently gossip was heard.
+  // Staleness thresholds — used by sections 3 and 4
   const STALE_WARN_MS  = 8000;
   const STALE_BREAK_MS = 15000;
-  if (_meshPeers.length > 0) {
-    // Positions: self at bottom-left anchor, peers at right/top spread
-    const CANVAS_NODE_POS = [
-      [0.08, 0.85],  // slot 0 — bottom-left (self)
-      [0.92, 0.85],  // slot 1 — bottom-right
-      [0.50, 0.08],  // slot 2 — top-center
-      [0.08, 0.08],  // slot 3 — top-left
-      [0.92, 0.08],  // slot 4 — top-right
-      [0.08, 0.50],  // slot 5 — mid-left
-      [0.92, 0.50],  // slot 6 — mid-right
-      [0.50, 0.92],  // slot 7 — bottom-center
-    ];
-    const gossipAge   = now - _lastMeshMs;          // ms since last outgoing gossip
-    const pulseCycle  = (Math.sin(now / 900) * 0.5 + 0.5); // 0–1 sinusoidal pulse ~1.1 Hz
-    const freshnessA  = Math.max(0, 1 - gossipAge / 3000);  // fades if gossip quiet > 3 s
-    const lineBaseA   = 0.12 + 0.12 * pulseCycle * freshnessA;
-
-    const fullNodes = [
-      { pod_id: myPodId, slot: myNodeSlot, age_ms: 0 },
-      ..._meshPeers.map((p, i) => ({ pod_id: p.pod_id, slot: i + 1, age_ms: p.age_ms ?? 0 })),
-    ];
-
-    ctx.save();
-    ctx.lineCap = "round";
-
-    for (let i = 0; i < fullNodes.length; i++) {
-      for (let j = i + 1; j < fullNodes.length; j++) {
-        const a = fullNodes[i], b = fullNodes[j];
-        if (a.age_ms >= STALE_BREAK_MS || b.age_ms >= STALE_BREAK_MS) continue;
-
-        const [ax, ay] = CANVAS_NODE_POS[a.slot % CANVAS_NODE_POS.length];
-        const [bx, by] = CANVAS_NODE_POS[b.slot % CANVAS_NODE_POS.length];
-        const x1 = ax * canvasW, y1 = ay * canvasH;
-        const x2 = bx * canvasW, y2 = by * canvasH;
-
-        // Staleness dims the line
-        const maxAge   = Math.max(a.age_ms, b.age_ms);
-        const staleF   = Math.max(0, 1 - maxAge / STALE_WARN_MS);
-        const alpha    = lineBaseA * staleF;
-        if (alpha < 0.005) continue;
-
-        const colorA = _podIdToColorCSS(a.pod_id);
-        const colorB = _podIdToColorCSS(b.pod_id);
-        const grad = ctx.createLinearGradient(x1, y1, x2, y2);
-        grad.addColorStop(0,   colorA + Math.round(alpha * 255).toString(16).padStart(2, "0"));
-        grad.addColorStop(0.5, "#ffffff" + Math.round(alpha * 0.4 * 255).toString(16).padStart(2, "0"));
-        grad.addColorStop(1,   colorB + Math.round(alpha * 255).toString(16).padStart(2, "0"));
-
-        ctx.beginPath();
-        ctx.moveTo(x1, y1);
-        ctx.lineTo(x2, y2);
-        ctx.strokeStyle = grad;
-        ctx.lineWidth   = 1.2;
-        ctx.shadowColor = colorA;
-        ctx.shadowBlur  = 8;
-        ctx.stroke();
-      }
-    }
-    ctx.restore();
-  }
 
   // ── 3. Network topology mini-map (bottom-right corner) ───────────────────────
   const MAP_R   = 54;   // arc radius for node placement
