@@ -665,6 +665,7 @@ async function init() {
   function resizeCanvas() {
     const wrap = document.getElementById("canvas-wrap");
     const w = wrap.clientWidth, h = wrap.clientHeight;
+    if (!w || !h) return;   // skip zero-dimension resize — would create invalid WebGPU textures
     canvasW = w; canvasH = h;
     gpuCanvas.width = w; gpuCanvas.height = h;
     overlayCanvas.width = w; overlayCanvas.height = h;
