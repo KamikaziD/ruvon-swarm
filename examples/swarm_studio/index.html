@@ -575,7 +575,7 @@ let sab           = null;
 let f32View       = null;
 let physWorkers   = [];
 let physDone      = 0;
-let _sabFree      = false;   // true = ArrayBuffer fallback, physics runs in main thread
+let _sabFallback      = false;   // true = ArrayBuffer fallback, physics runs in main thread
 let camera        = null;
 let renderer      = null;
 let meshBrain     = null;
@@ -647,9 +647,9 @@ let canvasW = 800, canvasH = 600;
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 async function init() {
-  _sabFree = typeof SharedArrayBuffer === "undefined" || !crossOriginIsolated;
+  _sabFallback = typeof SharedArrayBuffer === "undefined" || !crossOriginIsolated;
   console.log("[RUVON] init() crossOriginIsolated:", crossOriginIsolated,
-              "| sabFree:", _sabFree,
+              "| sabFallback:", _sabFallback,
               "| SW controller:", navigator.serviceWorker?.controller?.scriptURL ?? "none");
 
   const gpuCanvas = document.getElementById("webgpu-canvas");
@@ -697,11 +697,11 @@ async function init() {
   // ── Buffer: 64 drones × 16 floats × 4 bytes = 4096 bytes ───────────────
   // Use SharedArrayBuffer when cross-origin isolated (enables parallel physics workers).
   // Fall back to regular ArrayBuffer — physics runs inline in main thread instead.
-  sab    = _sabFree
+  sab    = _sabFallback
     ? new ArrayBuffer(DRONE_COUNT * SAB_FLOATS * 4)
     : new SharedArrayBuffer(DRONE_COUNT * SAB_FLOATS * 4);
   f32View = new Float32Array(sab);
-  if (_sabFree) console.log("[RUVON] Using ArrayBuffer fallback — inline main-thread physics");
+  if (_sabFallback) console.log("[RUVON] Using ArrayBuffer fallback — inline main-thread physics");
 
   // Initialise drones in landed state — fixed world-space grid around WORLD_CX/WORLD_CZ.
   // SAB.X = horizontal, SAB.Y = depth (→ WORLD_CZ), SAB.Z = altitude (0 = ground).
@@ -729,7 +729,7 @@ async function init() {
 
   // ── Physics workers (4 × 16 drones) — only when SAB is available ────────
   physWorkers = [];
-  if (!_sabFree) {
+  if (!_sabFallback) {
     for (let i = 0; i < NUM_PHYS_WKRS; i++) {
       const w = new Worker(new URL("./physics_worker.js", import.meta.url));
       physWorkers.push(w);
@@ -931,11 +931,11 @@ function _inlineStepFrame(preset) {
 }
 
 // Physics loop: post STEP → workers → FRAME_DONE → render → repeat
-// When _sabFree (no SharedArrayBuffer), physics runs inline before render.
+// When _sabFallback (no SharedArrayBuffer), physics runs inline before render.
 function startPhysicsLoop() {
   if (_animFrame) cancelAnimationFrame(_animFrame);
 
-  if (_sabFree) {
+  if (_sabFallback) {
     // Inline physics mode — no workers, everything runs in this thread
     function inlineStep(t) {
       camera.update();
@@ -2432,7 +2432,7 @@ function generateGroupCode() {
 // ── Trystero cross-device mesh ────────────────────────────────────────────────
 // Trystero uses BitTorrent DHT / WebTorrent trackers for WebRTC peer discovery —
 // no central signaling server, no whitelist, no rate-limiting.
-// Trackers used: tracker.webtorrent.dev, tracker.openwebtorrent.com (always open).
+// Trackers used: tracker.openwebtorrent.com (reliable open tracker).
 
 async function initTrystero(groupCode) {
   _groupCode = groupCode;
@@ -2461,10 +2461,9 @@ async function initTrystero(groupCode) {
     {
       appId: "ruvon-swarm-studio",
       // Explicitly list only the reliable trackers (btorrent.xyz and webtorrent.dev
-      // are flaky — openwebtorrent.com and files.fm are consistently reachable).
+      // are flaky — openwebtorrent.com is consistently reachable).
       relayUrls: [
         "wss://tracker.openwebtorrent.com",
-        "wss://tracker.files.fm:7073/announce",
       ],
     },
     groupCode.toLowerCase()
