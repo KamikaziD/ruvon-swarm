@@ -260,7 +260,7 @@ for _wf_name, _yaml_file in [
     ("SwarmHealth",    "swarm_health.yaml"),
 ]:
     try:
-        _wf_raw = _ir.read_text("ruvon_swarm.workflows", _yaml_file)
+        _wf_raw = _ir.files("ruvon_swarm.workflows").joinpath(_yaml_file).read_text(encoding="utf-8")
     except Exception as _e:
         print(f"[ruvon-swarm] WARNING: could not load {_yaml_file} from wheel: {_e}")
         continue
