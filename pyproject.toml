@@ -19,8 +19,8 @@ dependencies = ["ruvon-sdk>=0.1.2", "pydantic>=2.0"]
 [project.urls]
 Homepage = "https://github.com/KamikaziD/ruvon-swarm"
 Repository = "https://github.com/KamikaziD/ruvon-swarm"
-Demo = "https://kamazid.github.io/ruvon-swarm/"
-Documentation = "https://kamazid.github.io/ruvon-docs/"
+Demo = "https://kamikazid.github.io/ruvon-swarm/examples/swarm_studio/"
+Documentation = "https://kamikazid.github.io/ruvon-docs/"
 
 [build-system]
 requires = ["hatchling"]
