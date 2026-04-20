@@ -8,7 +8,7 @@
  *   • Reports granular loading progress to main thread
  *   • Supports per-step workflow callbacks (STEP_COMPLETED)
  *   • Supports Glass Box SQLite log queries (QUERY_LOG / LOG_RESULT)
- *   • Embeds drone_command_steps.py source and writes it to Pyodide FS
+ *   • Loads SwarmFormation + SwarmHealth workflows from ruvon_swarm wheel via importlib.resources
  *
  * Message Protocol
  * ────────────────
@@ -45,37 +45,8 @@ const RUVON_SWARM_WHEEL = "./ruvon_swarm-0.1.1-py3-none-any.whl";
 // Step names for progress reporting — matches SwarmFormation workflow YAML
 const STEP_NAMES = ["ParseCommand", "ValidateFormation", "BuildIntent", "LogFormation", "ExecuteFormation"];
 
-// ── SwarmFormation workflow YAML ──────────────────────────────────────────────
-// Written to Pyodide FS at boot. Step functions come from the ruvon_swarm wheel.
-const DRONE_COMMAND_YAML = `\
-workflow_type: SwarmFormation
-description: "Parse a swarm command and build a deterministic formation intent"
-version: "1"
-initial_state_model_path: ruvon_swarm.state_models.SwarmFormationState
-steps:
-  - name: ParseCommand
-    type: STANDARD
-    function: ruvon_swarm.steps.formation.parse_command
-    automate_next: true
-  - name: ValidateFormation
-    type: STANDARD
-    function: ruvon_swarm.steps.formation.validate_formation
-    automate_next: true
-  - name: BuildIntent
-    type: STANDARD
-    function: ruvon_swarm.steps.formation.build_intent
-    automate_next: true
-  - name: LogFormation
-    type: STANDARD
-    function: ruvon_swarm.steps.formation.log_formation
-    automate_next: true
-  - name: ExecuteFormation
-    type: STANDARD
-    function: ruvon_swarm.steps.formation.execute_formation
-    automate_next: true
-`;
-
-// STEPS_PY removed — step functions now come from ruvon_swarm package (installed below).
+// Workflow YAMLs are bundled inside the ruvon_swarm wheel under ruvon_swarm/workflows/.
+// startAgent() reads them via importlib.resources — no inline duplication.
 
 // ── State ─────────────────────────────────────────────────────────────────────
 let pyodide = null;
@@ -232,12 +203,11 @@ async function startAgent() {
 
   const agentId = "swarm-studio-" + Math.random().toString(36).slice(2, 8);
 
-  // Write the DroneCommand YAML (now using ruvon_swarm package paths) to Pyodide FS
-  pyodide.FS.writeFile("/home/pyodide/drone_command.yaml", DRONE_COMMAND_YAML);
+  // Workflow YAMLs are read from the ruvon_swarm wheel via importlib.resources (see below).
+  // No files need to be written to Pyodide FS — the wheel is the single source of truth.
 
   await pyodide.runPythonAsync(`
-import os, sys, yaml, logging, warnings
-sys.path.insert(0, "/home/pyodide")
+import sys, yaml, logging, warnings
 
 # Suppress expected-in-demo stderr noise:
 # 1. Pydantic model_versions protected-namespace warning (fixed in ruvon-sdk but guard here too)
@@ -278,21 +248,29 @@ if _agent.sync_manager is not None:
 
 await _agent.start()
 
-# Register workflows with config_manager and workflow_builder.
-# ruvon_swarm step functions are imported directly from the installed package.
+# Register workflows from the ruvon_swarm wheel (single source of truth).
+# importlib.resources reads the YAMLs bundled in ruvon_swarm/workflows/ — no inline duplication.
+import importlib.resources as _ir
+
 if _agent.config_manager._current_config is None:
     _agent.config_manager._current_config = DeviceConfig(version="demo")
 
-for _wf_name, _wf_path in [
-    ("SwarmFormation", "/home/pyodide/drone_command.yaml"),
+for _wf_name, _yaml_file in [
+    ("SwarmFormation", "swarm_formation.yaml"),
+    ("SwarmHealth",    "swarm_health.yaml"),
 ]:
-    _wf_raw  = open(_wf_path).read()
+    try:
+        _wf_raw = _ir.read_text("ruvon_swarm.workflows", _yaml_file)
+    except Exception as _e:
+        print(f"[ruvon-swarm] WARNING: could not load {_yaml_file} from wheel: {_e}")
+        continue
     _wf_dict = yaml.safe_load(_wf_raw)
     _agent.config_manager._current_config.workflows[_wf_name] = _wf_dict
     _agent.workflow_builder.workflow_registry[_wf_name] = {
         "type": _wf_name,
         "_yaml_content": _wf_raw,
     }
+    print(f"[ruvon-swarm] registered workflow: {_wf_name}")
 
 print("RuvonEdgeAgent started:", ${JSON.stringify(agentId)})
 `);
