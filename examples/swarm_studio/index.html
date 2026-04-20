@@ -1798,7 +1798,7 @@ function handleMeshMsg(e) {
           await ensureWllama(modelKey);
           const r = await _wllama.createChatCompletion(
             [{ role: "system", content: SYSTEM_PROMPT }, { role: "user", content: text }],
-            { nPredict: 150, temperature: 0.05 }
+            { nPredict: 300, temperature: 0.05 }
           );
           result = parseCommandMain(r.text ?? "");
         }
@@ -2023,9 +2023,17 @@ function parseCommandMain(raw) {
     if (cleaned[i] === "{") depth++;
     else if (cleaned[i] === "}") { depth--; if (depth === 0) { end = i; break; } }
   }
-  if (end === -1) return null;
+  // Truncation recovery: if no closing brace found, try closing open strings then appending "}
+  let fragment = cleaned.slice(start);
+  if (end === -1) {
+    // Close any open string literal then close the object
+    const inStr = (fragment.split('"').length - 1) % 2 !== 0;
+    fragment = fragment + (inStr ? '"' : '') + '}';
+  } else {
+    fragment = cleaned.slice(start, end + 1);
+  }
   try {
-    const cmd = JSON.parse(cleaned.slice(start, end + 1));
+    const cmd = JSON.parse(fragment);
     if (cmd.action === "response" || cmd.action === "write" || cmd.action === "display") cmd.action = "text";
     if (cmd.content && typeof cmd.content === "string") {
       const segs = cmd.content.trim().split(" ");
@@ -2050,7 +2058,7 @@ async function runWllamaMainThread(text) {
         const result = await _wllama.createChatCompletion(
           [{ role:"system", content: SYSTEM_PROMPT }, { role:"user", content: text }],
           {
-            nPredict: 150, temperature: 0.05,
+            nPredict: 300, temperature: 0.05,
             onNewToken: (_tok, piece) => {
               const s = piece instanceof Uint8Array ? _textDecoder.decode(piece, {stream:true}) : String(piece);
               document.getElementById("token-stream").textContent += s;
