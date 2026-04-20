@@ -45,11 +45,11 @@ const RUVON_SWARM_WHEEL = "./ruvon_swarm-0.1.0-py3-none-any.whl";
 // Step names for progress reporting — matches SwarmFormation workflow YAML
 const STEP_NAMES = ["ParseCommand", "ValidateFormation", "BuildIntent", "LogFormation", "ExecuteFormation"];
 
-// ── DroneCommand workflow YAML (now from ruvon-swarm package) ─────────────────
-// Kept for reference; the real YAML is loaded from ruvon_swarm.workflows package.
+// ── SwarmFormation workflow YAML ──────────────────────────────────────────────
+// Written to Pyodide FS at boot. Step functions come from the ruvon_swarm wheel.
 const DRONE_COMMAND_YAML = `\
-workflow_type: DroneCommand
-description: "Execute a single drone swarm command via ruvon-edge"
+workflow_type: SwarmFormation
+description: "Parse a swarm command and build a deterministic formation intent"
 version: "1"
 initial_state_model_path: ruvon_swarm.state_models.SwarmFormationState
 steps:
@@ -284,7 +284,7 @@ if _agent.config_manager._current_config is None:
     _agent.config_manager._current_config = DeviceConfig(version="demo")
 
 for _wf_name, _wf_path in [
-    ("DroneCommand", "/home/pyodide/drone_command.yaml"),
+    ("SwarmFormation", "/home/pyodide/drone_command.yaml"),
 ]:
     _wf_raw  = open(_wf_path).read()
     _wf_dict = yaml.safe_load(_wf_raw)
@@ -337,7 +337,7 @@ async function executeCommand(command, reqId, preset, globalCount) {
     const resultJson = await pyodide.runPythonAsync(`
 import json
 _r = await _agent.execute_workflow(
-    "DroneCommand",
+    "SwarmFormation",
     json.loads(${JSON.stringify(inputJson)})
 )
 json.dumps(_r if _r else {}, default=str)

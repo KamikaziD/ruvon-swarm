@@ -191,6 +191,10 @@ html, body { height: 100%; background: #05080f; color: #e0e6ef;
 details > summary { cursor: pointer; font-size: 11px; color: #6a8fb4; list-style: none; }
 details > summary::-webkit-details-marker { display: none; }
 </style>
+<!-- coi-serviceworker.js: registers the COOP/COEP service worker on first load,
+     then reloads the page so SharedArrayBuffer becomes available.
+     MUST be the first script — before any module or worker code. -->
+<script src="coi-serviceworker.js"></script>
 </head>
 <body>
 <div id="app">

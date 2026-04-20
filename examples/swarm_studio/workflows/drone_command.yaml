@@ -1,25 +1,30 @@
-workflow_type: DroneCommand
-description: "Execute a single drone swarm command via ruvon-edge"
+workflow_type: SwarmFormation
+description: "Parse a swarm command and build a deterministic formation intent"
 version: "1"
-initial_state_model_path: drone_command_steps.DroneCommandState
+initial_state_model_path: ruvon_swarm.state_models.SwarmFormationState
 
 steps:
   - name: ParseCommand
     type: STANDARD
-    function: drone_command_steps.parse_command
+    function: ruvon_swarm.steps.formation.parse_command
     automate_next: true
 
-  - name: ValidateCommand
+  - name: ValidateFormation
     type: STANDARD
-    function: drone_command_steps.validate_command
+    function: ruvon_swarm.steps.formation.validate_formation
     automate_next: true
 
-  - name: LogCommand
+  - name: BuildIntent
     type: STANDARD
-    function: drone_command_steps.log_command
+    function: ruvon_swarm.steps.formation.build_intent
     automate_next: true
 
-  - name: ExecuteCommand
+  - name: LogFormation
+    type: FIRE_AND_FORGET
+    function: ruvon_swarm.steps.formation.log_formation
+    automate_next: true
+
+  - name: ExecuteFormation
     type: STANDARD
-    function: drone_command_steps.execute_command
+    function: ruvon_swarm.steps.formation.execute_formation
     automate_next: true
