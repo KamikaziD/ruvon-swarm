@@ -2323,11 +2323,8 @@ function updateOverlay() {
 
   const now = performance.now();
 
-  // ── 0a. Vapor trails ─────────────────────────────────────────────────────
+  // ── 0. Vapor trails ──────────────────────────────────────────────────────
   _drawVaporTrails(ctx, canvasW, canvasH);
-
-  // ── 0b. Formation skeleton beams ─────────────────────────────────────────
-  _drawFormationBeams(ctx, canvasW, canvasH);
 
   // ── 1. Formation name fade (2 s fade-in, 2 s hold, 2 s fade-out; total 6 s) ──
   if (_hudFormationName) {
