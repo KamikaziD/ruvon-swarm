@@ -239,10 +239,6 @@ async function startAgent() {
 import os, sys, yaml, logging, warnings
 sys.path.insert(0, "/home/pyodide")
 
-# Demo environment: set a placeholder so the agent doesn't warn about missing keys.
-# WASM patch signature verification is not needed in the browser demo.
-os.environ.setdefault("RUVON_NKEY_PUBLIC_KEY", "demo-no-verify")
-
 # Suppress expected-in-demo stderr noise:
 # 1. Pydantic model_versions protected-namespace warning (fixed in ruvon-sdk but guard here too)
 warnings.filterwarnings("ignore", category=UserWarning, module="pydantic")
@@ -251,6 +247,10 @@ logging.getLogger("ruvon_edge.config_manager").setLevel(logging.CRITICAL)
 logging.getLogger("ruvon_edge.sync_manager").setLevel(logging.CRITICAL)
 logging.getLogger("ruvon_edge.transport").setLevel(logging.CRITICAL)
 logging.getLogger("ruvon_edge.agent").setLevel(logging.WARNING)
+# 3. NKey / WASM patch signature — not applicable in browser demo; silence both loggers
+logging.getLogger("ruvon_edge.nkey").setLevel(logging.CRITICAL)
+logging.getLogger("ruvon.nkey").setLevel(logging.CRITICAL)
+logging.getLogger("ruvon_edge.wasm").setLevel(logging.CRITICAL)
 
 from ruvon_edge.platform.pyodide import PyodidePlatformAdapter
 from ruvon_edge.implementations.persistence.pyodide_sqlite import PyodideSQLiteProvider

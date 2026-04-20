@@ -83,13 +83,17 @@
             return withIsolationHeaders(fresh);
           } catch (err) {
             console.warn("[COI-SW] same-origin fetch failed:", reqUrl.pathname, err?.message);
+            // Must return a Response — returning undefined causes an "Uncaught (in promise)" flood
+            return new Response("Service Unavailable", { status: 503, statusText: "Service Unavailable" });
           }
         })());
       } else {
         // ── Header-inject only for cross-origin (CDN fallback, PeerJS signaling) ──
         e.respondWith(
           fetch(e.request).then(withIsolationHeaders).catch(err => {
-            console.warn("[COI-SW] cross-origin fetch failed:", reqUrl.href, err?.message);
+            // Must return Response.error() — returning undefined triggers "Uncaught (in promise)"
+            // on every failed fetch, flooding the console.
+            return Response.error();
           })
         );
       }
