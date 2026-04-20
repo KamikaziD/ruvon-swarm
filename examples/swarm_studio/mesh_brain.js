@@ -39,6 +39,11 @@ const HYSTERESIS    = 0.30;  // challenger must exceed sovereign by this much to
 let _knownSovereignId  = null;   // pod_id of the sovereign we last saw/confirmed
 let _sovereignLastSeen = 0;      // ms timestamp — refreshed on every sovereign heartbeat/election
 
+// One-shot jitter timer used for both GOODBYE and stale-detection election paths.
+// Ensures only one delayed election is queued at a time, regardless of how many
+// heartbeats fire while we are waiting for a fresh sovereign to announce itself.
+let _electionJitterTimer = null;
+
 // ---------------------------------------------------------------------------
 // Message dedup — LRU
 // ---------------------------------------------------------------------------
@@ -263,7 +268,12 @@ function processIncomingMsg(msg) {
         // Without the jitter, all tabs fire at exactly the same moment (same GOODBYE task)
         // causing a near-certain split-brain that takes 1-2 extra rounds to resolve.
         _knownSovereignId = null;
-        setTimeout(maybeUpdateElection, 80 + Math.random() * 250);
+        if (!_electionJitterTimer) {
+          _electionJitterTimer = setTimeout(() => {
+            _electionJitterTimer = null;
+            maybeUpdateElection();
+          }, 80 + Math.random() * 250);
+        }
       } else {
         maybeUpdateElection();
       }
@@ -295,6 +305,23 @@ function processIncomingMsg(msg) {
           isSovereign = true;
           _knownSovereignId = POD_ID;
           self.postMessage({ type: "ELECTION", sovereign_pod_id: msg.sovereign_pod_id, is_me: true });
+        } else {
+          // A different tab won sovereign. Re-arm our heartbeat timer so it fires
+          // fresh from NOW, not from whenever it was last scheduled. This closes the
+          // "timer about to fire" race: without re-arming, a heartbeat that was
+          // milliseconds from firing would run maybeUpdateElection() before our
+          // _knownSovereignId = msg.sovereign_pod_id is honoured, causing a spurious
+          // self-election and a single-round split-brain.
+          if (_heartbeatInterval !== null) {
+            clearTimeout(_heartbeatInterval);
+            _heartbeatInterval = null;
+            scheduleNextHeartbeat();
+          }
+          // Cancel any pending jitter election — someone already won
+          if (_electionJitterTimer !== null) {
+            clearTimeout(_electionJitterTimer);
+            _electionJitterTimer = null;
+          }
         }
       }
       break;
@@ -571,8 +598,19 @@ function maybeUpdateElection() {
   if (!isSovereign && _knownSovereignId && _knownSovereignId !== POD_ID) {
     const sovereignIsStale = Date.now() - _sovereignLastSeen > STALE_MS;
     if (!sovereignIsStale) return;  // sovereign is alive — don't challenge
-    // Sovereign went stale — clear tracking and fall through to a fresh election
+
+    // Sovereign went stale (no beacon for 15 s). Apply the same jitter as the GOODBYE
+    // path so multiple tabs don't simultaneously detect staleness and all self-elect.
+    // Only schedule one jitter timer — if a fresh ELECTION arrives in the meantime,
+    // _knownSovereignId will be set and the delayed call will return early.
     _knownSovereignId = null;
+    if (!_electionJitterTimer) {
+      _electionJitterTimer = setTimeout(() => {
+        _electionJitterTimer = null;
+        maybeUpdateElection();
+      }, 80 + Math.random() * 250);
+    }
+    return;
   }
 
   const leader = electLeader();
