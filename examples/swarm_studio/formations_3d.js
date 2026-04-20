@@ -271,3 +271,40 @@ export function getFormationTargets3d(preset, globalN, start = 0, end = null, se
     _rng3d = prevRng;
   }
 }
+
+/**
+ * Return beam-path groups for a formation — the index sequences the beam renderer
+ * should connect with lines.  Each group is an array of local indices (0-based within
+ * this tab's slice of n drones).
+ *
+ * Returns null for formations whose natural sequential order already produces clean
+ * beams (sphere, helix, torus, vortex, wave, cube — all have short consecutive steps).
+ *
+ * Returns an explicit group array for formations whose index order interleaves
+ * multiple sub-structures (DNA: alternating strand A / strand B indices).
+ *
+ * @param {string} preset
+ * @param {number} n  — number of drones in this tab's local slice
+ * @returns Array<Array<number>> | null
+ */
+export function getBeamGroups3d(preset, n) {
+  if (preset === "dna") {
+    const strandN = Math.ceil(n * 0.7); // same constant as dnaFormation
+    // Strand A: even indices among the interleaved strand block
+    const strandA = [];
+    for (let i = 0; i < strandN; i += 2) strandA.push(i);
+    // Strand B: odd indices among the interleaved strand block
+    const strandB = [];
+    for (let i = 1; i < strandN; i += 2) strandB.push(i);
+    // Rungs: sequential triplets after the strand block
+    const groups = [strandA, strandB];
+    for (let i = strandN; i < n; i += 3) {
+      const rung = [];
+      for (let j = 0; j < 3 && i + j < n; j++) rung.push(i + j);
+      if (rung.length > 1) groups.push(rung);
+    }
+    return groups;
+  }
+  // All other 3D presets use natural sequential order → null = let renderer draw i→i+1
+  return null;
+}
