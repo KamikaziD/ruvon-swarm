@@ -498,6 +498,48 @@ const WORLD_CY  = HOVER_HEIGHT_RATIO * CANVAS_DEPTH + WORLD_RADIUS * WORLD_CENTE
 // Fixed orbit radius — all pods see the formation at the same angular size.
 const WORLD_CAM_RADIUS = WORLD_RADIUS * 5.5;  // ≈ 1650 — comfortably frames the formation
 
+// ── Creative-spec lookup — common freeform requests pre-mapped to parametric formulas ──────────
+// Resolved locally before wllama runs. Keys are lowercase regex patterns; values are formation_spec objects.
+const _PI2 = Math.PI * 2;
+const CREATIVE_SPECS = [
+  // Arcs / curves
+  { re: /half[\s-]?moon|semi[\s-]?circle|crescent/i,
+    spec: { name:"halfmoon",  t_min:0, t_max:Math.PI, fn_x:"0.5+0.38*cos(t)", fn_y:"0.5+0.38*sin(t)", fn_z:"0.5" } },
+  { re: /figure[\s-]?8|lemniscate|infinity/i,
+    spec: { name:"figure8",   t_min:0, t_max:_PI2, fn_x:"0.5+0.38*sin(t)", fn_y:"0.5+0.38*sin(t)*cos(t)", fn_z:"0.5+0.18*sin(2*t)" } },
+  // Knots / tangles
+  { re: /pretzel|trefoil|knot/i,
+    spec: { name:"trefoil",   t_min:0, t_max:_PI2, fn_x:"0.5+0.3*(sin(t)+2*sin(2*t))", fn_y:"0.5+0.3*(cos(t)-2*cos(2*t))", fn_z:"0.5+0.3*(-sin(3*t))" } },
+  // Flowers / rose
+  { re: /rose|flower|petal/i,
+    spec: { name:"rose5",     t_min:0, t_max:_PI2, fn_x:"0.5+0.4*cos(5*t)*cos(t)", fn_y:"0.5+0.4*cos(5*t)*sin(t)", fn_z:"0.5+0.15*sin(10*t)" } },
+  // Butterfly
+  { re: /butterfly/i,
+    spec: { name:"butterfly", t_min:0, t_max:12.566, fn_x:"0.5+0.35*sin(t)*(exp(cos(t))-2*cos(4*t))", fn_y:"0.5+0.35*cos(t)*(exp(cos(t))-2*cos(4*t))", fn_z:"0.5+0.2*sin(t*2)" } },
+  // Galaxy / spiral
+  { re: /galaxy|spiral\s+arm|milky\s*way/i,
+    spec: { name:"galaxy",    t_min:0, t_max:18.85, fn_x:"0.5+(0.04+0.4*(t/18.85))*cos(t)", fn_y:"0.5+(0.04+0.4*(t/18.85))*sin(t)", fn_z:"0.5+0.1*sin(t*0.5)" } },
+  // Shell / nautilus
+  { re: /shell|nautilus|snail/i,
+    spec: { name:"shell",     t_min:0, t_max:_PI2*2, fn_x:"0.5+0.04*exp(0.2*t)*cos(t)", fn_y:"0.5+0.04*exp(0.2*t)*sin(t)", fn_z:"0.5+0.15*sin(t)" } },
+  // Lissajous
+  { re: /lissajous/i,
+    spec: { name:"lissajous", t_min:0, t_max:_PI2, fn_x:"0.5+0.4*sin(3*t+0.5)", fn_y:"0.5+0.4*sin(2*t)", fn_z:"0.5+0.2*sin(t)" } },
+  // Corkscrew / screw
+  { re: /corkscrew|screw|spring|coil/i,
+    spec: { name:"coil",      t_min:0, t_max:_PI2*4, fn_x:"0.5+0.35*cos(t)", fn_y:"0.5+0.35*sin(t)", fn_z:"0.1+(t/(_PI2*4))*0.8" } },
+  // Zigzag / lightning
+  { re: /zigzag|zig[\s-]?zag/i,
+    spec: { name:"zigzag",    t_min:0, t_max:1, fn_x:"t", fn_y:"0.5+0.35*sin(t*20*3.14159)", fn_z:"0.5" } },
+];
+
+function _resolveCreativeSpec(text) {
+  for (const entry of CREATIVE_SPECS) {
+    if (entry.re.test(text)) return entry.spec;
+  }
+  return null;
+}
+
 // ── wllama ─────────────────────────────────────────────────────────────────────
 const WLLAMA_CDN  = "https://cdn.jsdelivr.net/npm/@wllama/wllama@2/esm/index.js";
 const WLLAMA_BASE = "https://cdn.jsdelivr.net/npm/@wllama/wllama@2/esm/";
@@ -1544,8 +1586,16 @@ function handleCommandBrainMsg(e) {
     handleCommand({ action: msg.action, preset: msg.preset, content: msg.content });
     dispatchToPyodide(msg.text || "", msg.preset, _fleetDroneCount());
   } else if (msg.type === "ESCALATE") {
-    document.getElementById("intent-status").textContent = "⟳ LLM thinking…";
-    runWllamaMainThread(msg.text, msg.reqId);
+    // Fast path: check local creative-spec lookup before spinning up the LLM
+    const creativeSpec = _resolveCreativeSpec(msg.text);
+    if (creativeSpec) {
+      document.getElementById("intent-status").textContent = "";
+      applyFormationSpec(creativeSpec);
+      dispatchToPyodide(msg.text, creativeSpec.name, _fleetDroneCount());
+    } else {
+      document.getElementById("intent-status").textContent = "⟳ LLM thinking…";
+      runWllamaMainThread(msg.text, msg.reqId);
+    }
   }
 }
 
@@ -1933,7 +1983,18 @@ window.onOllamaToggle = function(checked) {
   _useOllama = checked;
   document.getElementById("ollama-config").style.display = checked ? "flex" : "none";
   document.getElementById("wllama-config").style.display = checked ? "none" : "flex";
-  if (checked) probeOllama();
+  if (checked) {
+    // Ollama runs on HTTP — blocked by mixed-content policy from HTTPS pages.
+    // Works only when using the local dev server (serve.py on http://localhost).
+    if (location.protocol === "https:") {
+      document.getElementById("intent-status").textContent =
+        "⚠ Ollama requires local server — run serve.py and open http://localhost:8080";
+      _ollamaLive = false;
+    } else {
+      document.getElementById("intent-status").textContent = "";
+      probeOllama();
+    }
+  }
 };
 
 window.onModelChange = function(key) {
