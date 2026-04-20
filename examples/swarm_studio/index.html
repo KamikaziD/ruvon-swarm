@@ -2447,8 +2447,8 @@ async function initTrystero(groupCode) {
 
   let joinRoom;
   try {
-    // Dynamic import — works from type="module" script; CDN load cached by SW
-    ({ joinRoom } = await import("https://esm.sh/trystero@0.21.0/nostr"));
+    // Local bundle — served same-origin, no CDN dependency, cached by service worker
+    ({ joinRoom } = await import(new URL("./trystero-nostr.js", import.meta.url).href));
   } catch (err) {
     meshLog(`Trystero load failed: ${err.message} — cross-device unavailable`, "#f07070");
     return;
