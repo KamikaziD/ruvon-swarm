@@ -2454,7 +2454,15 @@ async function initTrystero(groupCode) {
   // Room ID is the group code (lowercased for consistency). All devices with the
   // same group code end up in the same room and form a full-mesh automatically.
   _trysteroRoom = joinRoom(
-    { appId: "ruvon-swarm-studio" },
+    {
+      appId: "ruvon-swarm-studio",
+      // Explicitly list only the reliable trackers (btorrent.xyz and webtorrent.dev
+      // are flaky — openwebtorrent.com and files.fm are consistently reachable).
+      relayUrls: [
+        "wss://tracker.openwebtorrent.com",
+        "wss://tracker.files.fm:7073/announce",
+      ],
+    },
     groupCode.toLowerCase()
   );
 
