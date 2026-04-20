@@ -68,23 +68,40 @@
       const isSameOrigin = reqUrl.origin === self.location.origin;
 
       if (isSameOrigin) {
-        // ── Cache-first for same-origin (app shell + pyodide-cache) ──────────
-        // On cache hit: serve instantly (no network round-trip).
-        // On cache miss: fetch, cache, then return — so next visit is instant.
+        // ── Cache strategy split by resource type ─────────────────────────────
+        // pyodide-cache/ + .whl wheels: cache-first (large, immutable per version)
+        // Everything else (.js, .html, .css …): network-first, fall back to cache.
+        //   This ensures app JS changes are always picked up without SW unregistration.
+        const isPyodideOrWheel =
+          reqUrl.pathname.includes("/pyodide-cache/") ||
+          reqUrl.pathname.endsWith(".whl");
+
         e.respondWith((async () => {
-          const cache  = await caches.open(CACHE_NAME);
-          const cached = await cache.match(e.request);
-          if (cached) {
-            return withIsolationHeaders(cached);
-          }
-          try {
-            const fresh = await fetch(e.request);
-            if (fresh.ok) cache.put(e.request, fresh.clone());
-            return withIsolationHeaders(fresh);
-          } catch (err) {
-            console.warn("[COI-SW] same-origin fetch failed:", reqUrl.pathname, err?.message);
-            // Must return a Response — returning undefined causes an "Uncaught (in promise)" flood
-            return new Response("Service Unavailable", { status: 503, statusText: "Service Unavailable" });
+          const cache = await caches.open(CACHE_NAME);
+          if (isPyodideOrWheel) {
+            // Cache-first: serve from cache if available, else fetch + cache
+            const cached = await cache.match(e.request);
+            if (cached) return withIsolationHeaders(cached);
+            try {
+              const fresh = await fetch(e.request);
+              if (fresh.ok) cache.put(e.request, fresh.clone());
+              return withIsolationHeaders(fresh);
+            } catch (err) {
+              console.warn("[COI-SW] pyodide fetch failed:", reqUrl.pathname, err?.message);
+              return new Response("Service Unavailable", { status: 503, statusText: "Service Unavailable" });
+            }
+          } else {
+            // Network-first: always try network, cache result, fall back to cache
+            try {
+              const fresh = await fetch(e.request);
+              if (fresh.ok) cache.put(e.request, fresh.clone());
+              return withIsolationHeaders(fresh);
+            } catch (err) {
+              const cached = await cache.match(e.request);
+              if (cached) return withIsolationHeaders(cached);
+              console.warn("[COI-SW] fetch failed, no cache:", reqUrl.pathname, err?.message);
+              return new Response("Service Unavailable", { status: 503, statusText: "Service Unavailable" });
+            }
           }
         })());
       } else {
