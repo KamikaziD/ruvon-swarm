@@ -29,14 +29,13 @@
 
 /* global self, loadPyodide, importScripts */
 
-// When served via serve.py locally, use the CDN proxy so CORP headers are guaranteed.
-// When served from GitHub Pages (or any origin without the proxy), use the CDN directly —
-// jsdelivr.net serves Pyodide files with Cross-Origin-Resource-Policy: cross-origin.
-const _hasProxy = location.hostname === "localhost" || location.hostname === "127.0.0.1";
-const PYODIDE_VERSION   = "v0.26.4";
-const PYODIDE_INDEX_URL = _hasProxy
-  ? "/pyodide/"
-  : `https://cdn.jsdelivr.net/pyodide/${PYODIDE_VERSION}/full/`;
+// Pyodide is always loaded from the bundled ./pyodide-cache/ directory.
+// - Local (serve.py): files are served from ./pyodide-cache/ with COOP/COEP/CORP headers.
+// - GitHub Pages: pyodide-cache/ is committed to the repo and served as same-origin static
+//   assets; the coi-serviceworker adds CORP headers. After the first load all files are in
+//   the browser HTTP cache — subsequent loads skip the network entirely (instant warm-up).
+const _isLocal = location.hostname === "localhost" || location.hostname === "127.0.0.1";
+const PYODIDE_INDEX_URL = _isLocal ? "/pyodide/" : "./pyodide-cache/";
 const PYODIDE_CDN = PYODIDE_INDEX_URL + "pyodide.js";
 // Wheels are served from the same origin (same-origin CORP is implicit).
 const RUVON_SDK_WHEEL   = "./ruvon_sdk-0.1.2-py3-none-any.whl";
@@ -237,8 +236,12 @@ async function startAgent() {
   pyodide.FS.writeFile("/home/pyodide/drone_command.yaml", DRONE_COMMAND_YAML);
 
   await pyodide.runPythonAsync(`
-import sys, yaml, logging, warnings
+import os, sys, yaml, logging, warnings
 sys.path.insert(0, "/home/pyodide")
+
+# Demo environment: set a placeholder so the agent doesn't warn about missing keys.
+# WASM patch signature verification is not needed in the browser demo.
+os.environ.setdefault("RUVON_NKEY_PUBLIC_KEY", "demo-no-verify")
 
 # Suppress expected-in-demo stderr noise:
 # 1. Pydantic model_versions protected-namespace warning (fixed in ruvon-sdk but guard here too)
