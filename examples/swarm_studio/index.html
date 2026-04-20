@@ -444,8 +444,8 @@ details > summary::-webkit-details-marker { display: none; }
 
 <div id="toast"></div>
 
-<!-- PeerJS — WebRTC DataChannel signaling for cross-device mesh -->
-<script src="peerjs.min.js"></script>
+<!-- trystero — serverless WebRTC via Nostr relay network (no signaling server needed) -->
+<!-- loaded dynamically in initTrystero() via esm.sh CDN -->
 
 <!-- ══ SCRIPT ════════════════════════════════════════════════════════════════ -->
 <script type="module">
@@ -598,11 +598,10 @@ let _stagingVisitorCount     = 0;      // sovereign: how many followers are stag
 let _chargingInterval        = null;   // battery recharge timer while landed
 let _animFrame       = null;
 
-// ── PeerJS cross-device state ─────────────────────────────────────────────────
-let _peer        = null;              // PeerJS Peer instance
-let _groupCode   = null;              // group key used to derive sovereign peer ID
-let _isFounder   = false;             // whether this tab is the sovereign founder
-const _remoteConns = new Map();       // peerId → DataConnection (open cross-device links)
+// ── Trystero cross-device state ───────────────────────────────────────────────
+let _groupCode        = null;         // group key for the mesh room
+let _trysteroRoom     = null;         // trystero Room instance
+let _trysteroBroadcast = null;        // fn(msg) → sends to all remote peers in room
 
 // ── HUD state ─────────────────────────────────────────────────────────────────
 let _hudFormationName    = "";      // currently displayed formation name
@@ -768,10 +767,9 @@ async function init() {
   const isFounder = !_params.has("group") || _params.get("founder") === "1";
   meshBrain.postMessage({ type: "INIT", groupCode, is_founder: isFounder, peerJsConfig: {} });
 
-  // ── PeerJS cross-device mesh ─────────────────────────────────────────────
-  // Sovereign claims peer ID immediately; followers wait a moment so sovereign
-  // registers first on the PeerJS signaling server.
-  setTimeout(() => initPeerJS(groupCode, isFounder), isFounder ? 0 : 500);
+  // ── Trystero cross-device mesh ────────────────────────────────────────────
+  // All tabs (sovereign and followers) join the same room — no signaling server.
+  initTrystero(groupCode);
 
   // ── Command brain ─────────────────────────────────────────────────────────
   commandBrain = new Worker(new URL("./command_brain.js", import.meta.url));
@@ -1732,11 +1730,8 @@ function handleMeshMsg(e) {
         setTimeout(() => _resendCurrentFormation(), 200); // brief delay so UI settles
       }
 
-      // Re-claim the sovereign PeerJS peer ID so remote followers can reconnect.
-      // Delay 1.2 s to let the old sovereign's peer ID expire on the signaling server.
-      if (_groupCode) {
-        setTimeout(() => initPeerJS(_groupCode, true), 1200);
-      }
+      // Trystero: all peers stay in the same room regardless of sovereignty changes —
+      // no re-init needed. The new sovereign is already connected to all remote peers.
     }
   } else if (msg.type === "REMOTE_SQUAD") {
     // Another tab's 64-drone squad arrived — merge into render pool
@@ -1823,8 +1818,8 @@ function handleMeshMsg(e) {
   } else if (msg.type === "TASK_ORPHANED") {
     meshLog(`TASK_ORPHANED  id=${msg.task_id?.slice(-6)}  ${msg.reason ?? ""}`, "#f07070");
   } else if (msg.type === "REMOTE_SEND") {
-    // Relay this message to all remote peers via PeerJS DataChannels
-    _peerRelay(msg.msg);
+    // Relay this message to all remote peers via trystero (Nostr-brokered WebRTC)
+    if (_trysteroBroadcast) _trysteroBroadcast(msg.msg);
   } else if (["HELP_OFFER_RECEIVED","HELP_SENT","HELP_OFFER_SENT"].includes(msg.type)) {
     // Purely informational — suppress in production, uncomment to debug task routing:
     // meshLog(`${msg.type}`, "#404060");
@@ -2430,138 +2425,57 @@ function generateGroupCode() {
   return `${w}-${n}`;
 }
 
-// ── PeerJS cross-device mesh ─────────────────────────────────────────────────
-// Relays messages to all open remote DataChannel connections.
-// PeerJS default (binary/msgpack) handles JS objects natively — no manual JSON needed.
-function _peerRelay(msg) {
-  if (_remoteConns.size === 0) return;
-  for (const [peerId, conn] of _remoteConns) {
-    if (conn.open) {
-      try { conn.send(msg); } catch (_) {}
-    } else {
-      _remoteConns.delete(peerId);
-    }
-  }
-}
+// ── Trystero cross-device mesh ────────────────────────────────────────────────
+// Trystero uses the Nostr relay network for WebRTC peer discovery — no central
+// signaling server needed. All tabs in the same group join the same "room" and
+// get direct P2P DataChannel connections to each other automatically.
+//
+// Why Nostr strategy: works in browser, free public relays, no rate-limiting,
+// survives GitHub Pages origin restrictions that blocked 0.peerjs.com.
 
-// Wires up a newly opened DataConnection (called for both sovereign and followers).
-function _setupPeerConn(conn) {
-  _remoteConns.set(conn.peer, conn);
-  meshLog(`PeerJS ↔ ${conn.peer.slice(-12)}`, "#7ed9a0");
-
-  conn.on("data", (m) => {
-    if (m?.type) meshBrain?.postMessage({ type: "REMOTE_MSG", msg: m });
-  });
-
-  conn.on("close", () => {
-    _remoteConns.delete(conn.peer);
-    meshLog(`PeerJS ✕ ${conn.peer.slice(-12)}`, "#f07070");
-    // Follower: attempt to reconnect to sovereign after 2 s
-    if (!_isFounder && _peer && !_peer.destroyed) {
-      setTimeout(() => _peerConnectToSovereign(), 2000);
-    }
-  });
-
-  conn.on("error", () => _remoteConns.delete(conn.peer));
-}
-
-// Derive a deterministic UUID v4 from a group code so both sovereign and followers
-// compute the same peer ID without any out-of-band transmission.
-// 0.peerjs.com validates custom peer IDs and rejects anything that isn't UUID v4 format.
-async function _groupCodeToUUID(groupCode) {
-  const data = new TextEncoder().encode("ruvon-swarm:" + groupCode.toLowerCase());
-  const hash = await crypto.subtle.digest("SHA-256", data);
-  const b = new Uint8Array(hash);
-  // Set UUID v4 version bits (bits 4-7 of byte 6 = 0100)
-  b[6] = (b[6] & 0x0f) | 0x40;
-  // Set RFC 4122 variant bits (bits 6-7 of byte 8 = 10)
-  b[8] = (b[8] & 0x3f) | 0x80;
-  const hex = [...b.slice(0, 16)].map(n => n.toString(16).padStart(2, "0")).join("");
-  return `${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20,32)}`;
-}
-
-let _sovereignPeerUUID = null; // cached UUID for this session's group
-
-async function _peerConnectToSovereign() {
-  if (!_peer || _peer.destroyed || !_groupCode) return;
-  if (!_sovereignPeerUUID) _sovereignPeerUUID = await _groupCodeToUUID(_groupCode);
-  if (_remoteConns.has(_sovereignPeerUUID)) return; // already connected
-  const conn = _peer.connect(_sovereignPeerUUID, { reliable: true });
-  conn.on("open", () => _setupPeerConn(conn));
-  conn.on("error", (err) => meshLog(`PeerJS: ${err.type}`, "#f07070"));
-}
-
-// PeerJS reconnect state — shared across initPeerJS calls
-let _peerReconnectAttempts = 0;
-let _peerReconnectTimer    = null;
-const _PEER_MAX_ATTEMPTS   = 6;   // give up cross-device after 6 failed attempts (~2 min)
-const _PEER_BACKOFF_BASE   = 2000; // 2 s, 4 s, 8 s, 16 s, 32 s, 60 s
-
-async function initPeerJS(groupCode, isFounder) {
+async function initTrystero(groupCode) {
   _groupCode = groupCode;
-  _isFounder = isFounder;
 
-  // Cancel any pending reconnect before destroying the old peer
-  if (_peerReconnectTimer !== null) {
-    clearTimeout(_peerReconnectTimer);
-    _peerReconnectTimer = null;
+  // Leave any existing room cleanly before joining a new one
+  if (_trysteroRoom) {
+    try { _trysteroRoom.leave(); } catch (_) {}
+    _trysteroRoom  = null;
+    _trysteroBroadcast = null;
   }
-  _peerReconnectAttempts = 0;
 
-  if (_peer && !_peer.destroyed) { _peer.destroy(); }
+  meshLog(`Mesh ↔ joining room "${groupCode}" via Nostr…`, "#b0c0f0");
 
-  // Derive stable UUID from group code — identical result on every device
-  _sovereignPeerUUID = await _groupCodeToUUID(groupCode);
+  let joinRoom;
+  try {
+    // Dynamic import — works from type="module" script; CDN load cached by SW
+    ({ joinRoom } = await import("https://esm.sh/trystero@0.21.0/nostr"));
+  } catch (err) {
+    meshLog(`Trystero load failed: ${err.message} — cross-device unavailable`, "#f07070");
+    return;
+  }
 
-  // Sovereign claims the stable UUID peer ID; followers use a random PeerJS-assigned ID.
-  _peer = isFounder ? new Peer(_sovereignPeerUUID) : new Peer();
+  // Room ID is the group code (lowercased for consistency). All devices with the
+  // same group code end up in the same room and form a full-mesh automatically.
+  _trysteroRoom = joinRoom(
+    { appId: "ruvon-swarm-studio" },
+    groupCode.toLowerCase()
+  );
 
-  _peer.on("open", (id) => {
-    _peerReconnectAttempts = 0;  // reset backoff on successful connect
-    // Log short group code, not the full UUID
-    meshLog(`PeerJS ↔ group:${groupCode} ${isFounder ? "(sovereign)" : id.slice(-8)}`, "#7ed9a0");
-    if (!isFounder) {
-      // Small delay so sovereign finishes registering first
-      setTimeout(() => _peerConnectToSovereign(), 300);
-    }
+  // Create a typed action channel for mesh gossip messages
+  const [sendMesh, getMesh] = _trysteroRoom.makeAction("mesh");
+  _trysteroBroadcast = sendMesh; // exposed so REMOTE_SEND handler can call it
+
+  // Receive messages from any remote peer — forward directly into mesh_brain
+  getMesh((data, peerId) => {
+    if (data?.type) meshBrain?.postMessage({ type: "REMOTE_MSG", msg: data });
   });
 
-  // Sovereign accepts incoming follower connections
-  _peer.on("connection", (conn) => {
-    conn.on("open", () => _setupPeerConn(conn));
+  _trysteroRoom.onPeerJoin((peerId) => {
+    meshLog(`WebRTC ↔ ${peerId.slice(-8)} joined`, "#7ed9a0");
   });
 
-  _peer.on("error", (err) => {
-    if (err.type === "unavailable-id") {
-      // UUID collision extremely unlikely but handle gracefully:
-      // Alter variant byte to produce a sibling UUID and retry once.
-      meshLog(`PeerJS: peer ID taken, using fallback UUID`, "#f0c070");
-      const fallbackUUID = _sovereignPeerUUID.replace(/^(.{19})/, (m) => {
-        const hex = parseInt(m.slice(-2), 16);
-        return m.slice(0, -2) + ((hex ^ 0x01)).toString(16).padStart(2, "0");
-      });
-      _peer = new Peer(fallbackUUID);
-      _peer.on("open", () => meshLog(`PeerJS ↔ group:${groupCode} (fallback)`, "#7ed9a0"));
-      _peer.on("connection", (conn) => { conn.on("open", () => _setupPeerConn(conn)); });
-    } else {
-      meshLog(`PeerJS: ${err.type}`, "#f07070");
-    }
-  });
-
-  _peer.on("disconnected", () => {
-    if (_peer.destroyed) return;
-    if (_peerReconnectAttempts >= _PEER_MAX_ATTEMPTS) {
-      meshLog(`PeerJS: cross-device unavailable (signaling server unreachable)`, "#f07070");
-      return;
-    }
-    // Exponential backoff: 2 s, 4 s, 8 s, 16 s, 32 s, 60 s
-    const delay = Math.min(60000, _PEER_BACKOFF_BASE * Math.pow(2, _peerReconnectAttempts));
-    _peerReconnectAttempts++;
-    meshLog(`PeerJS: reconnecting in ${(delay/1000).toFixed(0)} s (attempt ${_peerReconnectAttempts}/${_PEER_MAX_ATTEMPTS})`, "#f0c070");
-    _peerReconnectTimer = setTimeout(() => {
-      _peerReconnectTimer = null;
-      if (!_peer.destroyed) _peer.reconnect();
-    }, delay);
+  _trysteroRoom.onPeerLeave((peerId) => {
+    meshLog(`WebRTC ✕ ${peerId.slice(-8)} left`, "#f07070");
   });
 }
 
