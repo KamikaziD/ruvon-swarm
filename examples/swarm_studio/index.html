@@ -1988,7 +1988,7 @@ window.onOllamaToggle = function(checked) {
     // Works only when using the local dev server (serve.py on http://localhost).
     if (location.protocol === "https:") {
       document.getElementById("intent-status").textContent =
-        "⚠ Ollama blocked by HTTPS — options: (1) run serve.py → open http://localhost:8080  (2) Cloudflare Tunnel: OLLAMA_ORIGINS=https://kamikazid.github.io ollama serve  then  cloudflared tunnel --url http://localhost:11434  and paste the https:// URL below";
+        "⚠ Ollama blocked by HTTPS. Option A: run serve.py → open http://localhost:8080. Option B (tunnel): set OLLAMA_ORIGINS=https://kamikazid.github.io when starting Ollama, then run  cloudflared tunnel --url http://localhost:11434  (or any HTTPS tunnel) and paste the URL below.";
       _ollamaLive = false;
     } else {
       document.getElementById("intent-status").textContent = "";
@@ -2006,9 +2006,12 @@ window.scheduleOllamaProbe = function() {
   _ollamaProbeTimer = setTimeout(probeOllama, 800);
 };
 
+function _ollamaBase() {
+  return (document.getElementById("ollama-url")?.value?.trim() || "http://localhost:11434").replace(/\/+$/, "");
+}
+
 async function probeOllama() {
-  const url = document.getElementById("ollama-url")?.value?.trim();
-  if (!url) return;
+  const url = _ollamaBase();
   _ollamaModel = document.getElementById("ollama-model")?.value?.trim() || "llama3.2:3b";
   try {
     const r = await fetch(url + "/api/tags", { signal: AbortSignal.timeout(2000) });
@@ -2019,7 +2022,7 @@ async function probeOllama() {
 }
 
 async function runWithOllama(text) {
-  const url = document.getElementById("ollama-url")?.value?.trim() || "http://localhost:11434";
+  const url = _ollamaBase();
   _ollamaModel = document.getElementById("ollama-model")?.value?.trim() || "llama3.2:3b";
   const ts = document.getElementById("token-stream");
   document.getElementById("model-status").textContent = `⟳ Ollama (${_ollamaModel})…`;

@@ -69,12 +69,11 @@
 
       if (isSameOrigin) {
         // ── Cache strategy split by resource type ─────────────────────────────
-        // pyodide-cache/ + .whl wheels: cache-first (large, immutable per version)
+        // pyodide-cache/ only: cache-first (35 MB runtime, immutable per Pyodide version).
+        // Root .whl wheels: network-first — they are small and change between deploys.
         // Everything else (.js, .html, .css …): network-first, fall back to cache.
-        //   This ensures app JS changes are always picked up without SW unregistration.
         const isPyodideOrWheel =
-          reqUrl.pathname.includes("/pyodide-cache/") ||
-          reqUrl.pathname.endsWith(".whl");
+          reqUrl.pathname.includes("/pyodide-cache/");
 
         e.respondWith((async () => {
           const cache = await caches.open(CACHE_NAME);
